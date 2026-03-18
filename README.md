@@ -1,19 +1,19 @@
-# playwright-browser
+# browser-automation
 
-Claude Code plugin for browser automation via [Playwright MCP](https://github.com/playwright-community/mcp). Launches Chrome with a persistent profile and connects via CDP for full browser control.
+Claude Code plugin for browser automation. Launches Chrome with a persistent profile and connects via CDP for full browser control.
 
 ## Install
 
 ```bash
 /plugin marketplace add generativereality/plugins
-/plugin install playwright-browser@generativereality
+/plugin install browser-automation@generativereality
 ```
 
 ## What it does
 
-- Registers the Playwright MCP server (connects to Chrome via CDP on port 9222)
-- Provides a `/browser` skill that explains setup and available tools
-- Uses a persistent Chrome profile (`PlaywrightClaude`) so logins and cookies survive across sessions
+- Registers a browser automation MCP server (connects to Chrome via CDP on port 9222)
+- Provides a `/browser` skill with setup instructions and available tools
+- Uses a persistent Chrome profile so logins and cookies survive across sessions
 
 ## Usage
 
