@@ -22,7 +22,7 @@ If it returns `000` or fails, launch Chrome:
 ```bash
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
   --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/Library/Application Support/Google/Chrome/PlaywrightClaude" \
+  --user-data-dir="$HOME/Library/Application Support/Google/Chrome/browser-automation" \
   --no-first-run --no-default-browser-check 'about:blank' &
 ```
 
@@ -66,7 +66,7 @@ Once Chrome is running, these Playwright MCP tools are available:
 
 ## Notes
 
-- The `PlaywrightClaude` profile is separate from your normal Chrome profile — no conflicts
+- The `browser-automation` profile is separate from your normal Chrome profile — no conflicts
 - Logins persist between sessions, so you only need to authenticate once per site
 - For pages with complex DOMs (like Porkbun), prefer `browser_run_code` for DOM interaction over `browser_snapshot`
 - Cloudflare dashboard pages load slowly — wait 3-5 seconds after navigation before taking snapshots
