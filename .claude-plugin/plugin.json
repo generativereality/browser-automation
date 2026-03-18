@@ -1,0 +1,16 @@
+{
+  "name": "playwright-browser",
+  "description": "Browser automation for Claude Code via Playwright MCP. Launches Chrome with a persistent profile and connects via CDP.",
+  "version": "0.1.0",
+  "author": {
+    "name": "generativereality"
+  },
+  "skills": [
+    {
+      "name": "browser",
+      "path": "skills/browser/SKILL.md"
+    }
+  ],
+  "repository": "https://github.com/generativereality/playwright-browser",
+  "license": "MIT"
+}
