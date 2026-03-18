@@ -5,12 +5,5 @@
   "author": {
     "name": "generativereality"
   },
-  "skills": [
-    {
-      "name": "browser",
-      "path": "skills/browser/SKILL.md"
-    }
-  ],
-  "repository": "https://github.com/generativereality/browser-automation",
-  "license": "MIT"
+  "homepage": "https://github.com/generativereality/browser-automation"
 }
