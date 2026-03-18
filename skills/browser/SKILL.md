@@ -68,6 +68,6 @@ Once Chrome is running, these Playwright MCP tools are available:
 
 - The `browser-automation` profile is separate from your normal Chrome profile — no conflicts
 - Logins persist between sessions, so you only need to authenticate once per site
-- For pages with complex DOMs (like Porkbun), prefer `browser_run_code` for DOM interaction over `browser_snapshot`
-- Cloudflare dashboard pages load slowly — wait 3-5 seconds after navigation before taking snapshots
-- Some pages show Turnstile challenges that appear as empty snapshots — retry or navigate directly
+- For pages with very large or complex DOMs, prefer `browser_run_code` over `browser_snapshot`
+- Some pages load slowly — wait a few seconds after navigation before taking snapshots
+- CAPTCHA challenges may appear as empty snapshots — retry or navigate directly
