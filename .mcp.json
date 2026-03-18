@@ -5,7 +5,7 @@
       "args": [
         "@playwright/mcp@latest",
         "--cdp-endpoint",
-        "http://localhost:9222"
+        "http://localhost:9223"
       ]
     }
   }

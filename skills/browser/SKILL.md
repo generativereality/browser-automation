@@ -14,14 +14,14 @@ Before using any `mcp__playwright__*` tools, ensure Chrome is running with remot
 Check if Chrome CDP is already available:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:9222/json/version
+curl -s -o /dev/null -w "%{http_code}" http://localhost:9223/json/version
 ```
 
 If it returns `000` or fails, launch Chrome:
 
 ```bash
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9222 \
+  --remote-debugging-port=9223 \
   --user-data-dir="$HOME/Library/Application Support/Google/Chrome/browser-automation" \
   --no-first-run --no-default-browser-check 'about:blank' &
 ```
@@ -30,7 +30,7 @@ Wait for it to be ready:
 
 ```bash
 for i in {1..10}; do
-  curl -s -o /dev/null http://localhost:9222/json/version && echo "Ready" && break
+  curl -s -o /dev/null http://localhost:9223/json/version && echo "Ready" && break
   sleep 0.5
 done
 ```
