@@ -7,6 +7,43 @@ description: Launch and control a browser via Playwright MCP — navigate pages,
 
 Control a real Chrome browser instance via Playwright MCP tools. The browser uses a persistent profile so logins, cookies, and preferences are preserved across sessions.
 
+## Prerequisites
+
+Before using browser automation, two dependencies must be available:
+
+### 1. Node.js
+
+The Playwright MCP server requires Node.js (v18+) to run via `npx`.
+
+Check if Node.js is installed:
+
+```bash
+which node && node --version
+```
+
+If `node` is not found, help the user install it. The recommended approach for macOS:
+
+```bash
+# Option A: Homebrew (most common)
+brew install node
+
+# Option B: If Homebrew is not installed either
+curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash
+brew install node
+```
+
+**IMPORTANT:** If Node.js is not installed, the `playwright` MCP server from this plugin will show as "failed" in `/plugin` status. Install Node.js first, then restart the Claude Code session for the MCP server to start.
+
+### 2. Google Chrome
+
+Chrome must be installed at `/Applications/Google Chrome.app` (macOS).
+
+Check:
+
+```bash
+ls "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
 ## Setup
 
 Before using any `mcp__playwright__*` tools, ensure Chrome is running with remote debugging enabled.
@@ -58,11 +95,19 @@ Once Chrome is running, these Playwright MCP tools are available:
 
 ## Usage Pattern
 
-1. Always check/launch Chrome first (see Setup above)
-2. Navigate to the target URL with `browser_navigate`
-3. Take a snapshot with `browser_snapshot` to see the page structure
-4. Interact using `browser_click`, `browser_type`, etc. using refs from the snapshot
-5. Take new snapshots after interactions to verify state changes
+1. Always check prerequisites (Node.js + Chrome) first
+2. Launch Chrome with remote debugging if not running (see Setup above)
+3. Navigate to the target URL with `browser_navigate`
+4. Take a snapshot with `browser_snapshot` to see the page structure
+5. Interact using `browser_click`, `browser_type`, etc. using refs from the snapshot
+6. Take new snapshots after interactions to verify state changes
+
+## Troubleshooting
+
+- **MCP server shows "failed"**: Most likely Node.js is not installed or not in PATH. Run `which node` to check. Install via `brew install node`, then restart Claude Code.
+- **Chrome won't launch**: Verify Chrome is installed at `/Applications/Google Chrome.app`
+- **Port conflict**: If port 9223 is in use, another Chrome debug instance may be running. Check with `lsof -i :9223`.
+- **CAPTCHA challenges**: May appear as empty snapshots — retry or navigate directly
 
 ## Notes
 
@@ -70,4 +115,3 @@ Once Chrome is running, these Playwright MCP tools are available:
 - Logins persist between sessions, so you only need to authenticate once per site
 - For pages with very large or complex DOMs, prefer `browser_run_code` over `browser_snapshot`
 - Some pages load slowly — wait a few seconds after navigation before taking snapshots
-- CAPTCHA challenges may appear as empty snapshots — retry or navigate directly

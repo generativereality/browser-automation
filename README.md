@@ -27,5 +27,8 @@ Just ask Claude to interact with a website and it will use the browser tools aut
 
 ## Requirements
 
-- Google Chrome installed at `/Applications/Google Chrome.app`
+- **Node.js** (v18+) — needed to run `npx @playwright/mcp`
+- **Google Chrome** installed at `/Applications/Google Chrome.app`
 - macOS (Chrome launch command is macOS-specific)
+
+If Node.js is not installed, the Playwright MCP server will fail to start. The `/browser` skill includes detection and installation instructions.
