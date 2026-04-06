@@ -97,7 +97,7 @@ Once Chrome is running, these Playwright MCP tools are available:
 
 1. Always check prerequisites (Node.js + Chrome) first
 2. Launch Chrome with remote debugging if not running (see Setup above)
-3. Navigate to the target URL with `browser_navigate`
+3. **Open a new tab** with `browser_tabs` (action: "new", url: target URL) — never navigate in an existing tab the user may be using
 4. Take a snapshot with `browser_snapshot` to see the page structure
 5. Interact using `browser_click`, `browser_type`, etc. using refs from the snapshot
 6. Take new snapshots after interactions to verify state changes
