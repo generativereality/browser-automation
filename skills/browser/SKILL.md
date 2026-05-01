@@ -93,6 +93,18 @@ Once Chrome is running, these Playwright MCP tools are available:
 | `mcp__playwright__browser_tab_select` | Switch to a tab |
 | `mcp__playwright__browser_tab_close` | Close a tab |
 
+## File outputs (screenshots, console logs, snapshots)
+
+The MCP server is launched with `--output-dir .browser-automation` (see `.mcp.json`), so any relative `filename:` you pass to a tool resolves there — *not* into the project root. `.browser-automation/` is conventionally gitignored, so debug artifacts won't dirty the working tree.
+
+- **Default** (no `filename`): files land at `.browser-automation/page-<timestamp>.png` etc. Safe.
+- **Relative path** (e.g. `filename: "shop-after-fix.png"`): goes to `.browser-automation/shop-after-fix.png`. Still safe.
+- **Absolute path** (e.g. `filename: "/tmp/foo.png"`): goes exactly there — use only when you specifically need the file outside the project (e.g. sharing across sessions).
+
+Do **not** pass paths like `./foo.png`, `../foo.png`, or bare names that depend on cwd — the MCP's notion of "output dir" is what matters, not the agent's cwd. If you find loose `*.png` files at the repo root, an older MCP config (without `--output-dir`) is in use; update `.mcp.json` accordingly.
+
+If `.browser-automation/` isn't in the project's `.gitignore`, add it.
+
 ## Usage Pattern
 
 1. Always check prerequisites (Node.js + Chrome) first

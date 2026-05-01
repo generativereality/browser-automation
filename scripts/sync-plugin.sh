@@ -34,6 +34,12 @@ if ! diff -q "$REPO_ROOT/.claude-plugin/plugin.json" "$PLUGINS_DIR/plugins/brows
   ERRORS=1
 fi
 
+# Check .mcp.json match
+if ! diff -q "$REPO_ROOT/.mcp.json" "$PLUGINS_DIR/plugins/browser-automation/.mcp.json" >/dev/null 2>&1; then
+  echo "MISMATCH: .mcp.json differs from plugins repo"
+  ERRORS=1
+fi
+
 if [ "$CHECK_ONLY" = true ]; then
   if [ "$ERRORS" -ne 0 ]; then
     echo ""
@@ -48,6 +54,7 @@ fi
 mkdir -p "$PLUGINS_DIR/plugins/browser-automation/.claude-plugin" "$PLUGINS_DIR/plugins/browser-automation/skills/browser"
 cp "$REPO_ROOT/.claude-plugin/plugin.json" "$PLUGINS_DIR/plugins/browser-automation/.claude-plugin/plugin.json"
 cp "$REPO_ROOT/skills/browser/SKILL.md" "$PLUGINS_DIR/plugins/browser-automation/skills/browser/SKILL.md"
+cp "$REPO_ROOT/.mcp.json" "$PLUGINS_DIR/plugins/browser-automation/.mcp.json"
 
 cd "$PLUGINS_DIR"
 if git diff --quiet; then

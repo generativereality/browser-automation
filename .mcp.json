@@ -5,7 +5,9 @@
       "args": [
         "@playwright/mcp@latest",
         "--cdp-endpoint",
-        "http://localhost:9223"
+        "http://localhost:9223",
+        "--output-dir",
+        ".browser-automation"
       ]
     }
   }
