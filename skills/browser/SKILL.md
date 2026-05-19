@@ -1,129 +1,203 @@
 ---
 name: browser
-description: Launch and control a browser via Playwright MCP — navigate pages, click elements, fill forms, take snapshots, and automate web tasks. Use this when you need to interact with websites that require authentication or dynamic content.
+description: Drive a real browser from the shell via `playwright-cli` — open pages, click, type, fill forms, evaluate JS, capture snapshots, and persist auth across sessions. Use this whenever you need to interact with a web page (especially behind a login) and there's no CLI or API that already covers the task.
+allowed-tools: Bash(playwright-cli:*) Bash(npx:*) Bash(npm:*)
 ---
 
-# Browser Automation (Playwright MCP)
+# Browser automation via `playwright-cli`
 
-Control a real Chrome browser instance via Playwright MCP tools. The browser uses a persistent profile so logins, cookies, and preferences are preserved across sessions.
+This skill drives the browser through Microsoft's official `@playwright/cli` — a plain CLI, no MCP server. Each invocation is a normal Bash call that returns a page snapshot reference on stdout.
 
-## Prerequisites
+## When to reach for this
 
-Before using browser automation, two dependencies must be available:
+- You need to interact with a dashboard, form, or app that has no API or no public CLI.
+- An action is gated behind interactive login or session cookies.
+- You need to scrape behind auth, or capture a screenshot/PDF of a rendered page.
 
-### 1. Node.js
+If a vendor-specific CLI exists (`gh`, `stripe`, `wrangler`, `hf`, etc.), prefer that. The browser is the last resort, not the first.
 
-The Playwright MCP server requires Node.js (v18+) to run via `npx`.
-
-Check if Node.js is installed:
-
-```bash
-which node && node --version
-```
-
-If `node` is not found, help the user install it. The recommended approach for macOS:
+## One-time setup (per machine)
 
 ```bash
-# Option A: Homebrew (most common)
-brew install node
-
-# Option B: If Homebrew is not installed either
-curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash
-brew install node
+npm install -g @playwright/cli@latest
+playwright-cli install              # downloads ffmpeg, detects browsers
+playwright-cli install-browser      # optional: skip if Chrome is already on the system
 ```
 
-**IMPORTANT:** If Node.js is not installed, the `playwright` MCP server from this plugin will show as "failed" in `/plugin` status. Install Node.js first, then restart the Claude Code session for the MCP server to start.
-
-### 2. Google Chrome
-
-Chrome must be installed at `/Applications/Google Chrome.app` (macOS).
-
-Check:
+Verify:
 
 ```bash
-ls "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+playwright-cli --version
 ```
 
-## Setup
+If `playwright-cli` isn't on PATH, fall back to `npx --no-install playwright-cli <command>`.
 
-Before using any `mcp__playwright__*` tools, ensure Chrome is running with remote debugging enabled.
+## First-time setup per workspace: write sane defaults
 
-Check if Chrome CDP is already available:
+Before opening any browser, ensure `.playwright/cli.config.json` exists in the working directory with the recommended defaults:
+
+```json
+{
+  "outputDir": ".browser-automation",
+  "browser": {
+    "launchOptions": {
+      "headless": false
+    }
+  }
+}
+```
+
+Why these two settings:
+
+- **`outputDir: ".browser-automation"`** — snapshots, screenshots, console logs, and traces all land there instead of the default `.playwright-cli/`. Matches the gitignored convention from the previous plugin.
+- **`headless: false`** — browser opens visibly by default. Almost every real browser-automation task needs to handle interactive auth (BankID, OAuth, 2FA, CAPTCHA, etc.); a headless default just means every command needs `--headed` and the user can't see what's happening. Make it the default.
+
+Also add to `.gitignore`:
+
+```
+.browser-automation/
+.playwright/
+```
+
+The `.playwright/` daemon-state dir is created at first `open`; the config file is the only thing in there worth keeping under version control (but the daemon state inside isn't).
+
+## The full command reference is shipped with the CLI
+
+`@playwright/cli` ships its own SKILL.md with every command, every flag, and worked examples. Read it on demand instead of duplicating it here — find the exact path in the first lines of `playwright-cli --help` (the `Agent skill:` line, typically under `node_modules/@playwright/cli/node_modules/playwright-core/lib/tools/cli-client/skill/SKILL.md`).
+
+Touch points worth remembering from that file:
+
+| Need | Command |
+|---|---|
+| Open & navigate | `playwright-cli open https://example.com` |
+| Get refs for clicking | `playwright-cli snapshot` — returns `e1`, `e2`, … refs |
+| Click / type / fill | `playwright-cli click e5`, `playwright-cli fill e7 "value" --submit` |
+| Run JS in the page | `playwright-cli eval "document.title"` |
+| Save / restore auth | `playwright-cli state-save auth.json` → later: `state-load auth.json` |
+| Inspect network | `playwright-cli requests` then `request <n>` |
+| Pipe just the value | `playwright-cli --raw cookie-get session_id` |
+| Detach (keep external browser running) | `playwright-cli detach` |
+| Close | `playwright-cli close` |
+
+## Picking the right browser source
+
+There are three ways to get a browser. Try them in this order:
+
+### 1. Attach to a running Chrome on port 9223 (best when available)
+
+If a long-running Chrome instance is already up with `--remote-debugging-port=9223` (the convention this plugin grew up with), attach to it. All existing logins, cookies, and tabs are reused immediately — no re-auth, no profile copy, no risk of losing state.
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:9223/json/version
+playwright-cli -s=session-name attach --cdp=http://localhost:9223
 ```
 
-If it returns `000` or fails, launch Chrome:
+How to know whether one is running:
 
 ```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9223 \
-  --user-data-dir="$HOME/Library/Application Support/Google/Chrome/browser-automation" \
-  --no-first-run --no-default-browser-check 'about:blank' &
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:9223/json/version
+# 200 → attach. 000 or non-200 → no CDP browser available, fall through to (2) or (3).
 ```
 
-Wait for it to be ready:
+When you're done, **`detach`** instead of `close` — `close` may terminate the external browser the user is sharing with you.
 
 ```bash
-for i in {1..10}; do
-  curl -s -o /dev/null http://localhost:9223/json/version && echo "Ready" && break
-  sleep 0.5
-done
+playwright-cli -s=session-name detach
 ```
 
-## Available Tools
+### 2. Launch a managed Chrome on an existing profile
 
-Once Chrome is running, these Playwright MCP tools are available:
+If no CDP-enabled Chrome is running, launch a fresh Playwright-managed Chrome but point it at an existing persistent profile dir:
 
-| Tool | Purpose |
-|------|---------|
-| `mcp__playwright__browser_navigate` | Navigate to a URL |
-| `mcp__playwright__browser_snapshot` | Get an accessibility snapshot of the current page |
-| `mcp__playwright__browser_click` | Click an element (by ref from snapshot) |
-| `mcp__playwright__browser_type` | Type text into an input field |
-| `mcp__playwright__browser_select_option` | Select from a dropdown |
-| `mcp__playwright__browser_hover` | Hover over an element |
-| `mcp__playwright__browser_drag` | Drag between elements |
-| `mcp__playwright__browser_screenshot` | Take a screenshot |
-| `mcp__playwright__browser_run_code` | Execute JavaScript in the page |
-| `mcp__playwright__browser_wait` | Wait for a specified time |
-| `mcp__playwright__browser_tab_list` | List open tabs |
-| `mcp__playwright__browser_tab_new` | Open a new tab |
-| `mcp__playwright__browser_tab_select` | Switch to a tab |
-| `mcp__playwright__browser_tab_close` | Close a tab |
+```bash
+playwright-cli -s=session-name open https://example.com \
+  --profile="$HOME/Library/Application Support/Google/Chrome/browser-automation"
+```
 
-## File outputs (screenshots, console logs, snapshots)
+The profile must not be in use by another Chrome process — Chrome will refuse to start with a locked profile.
 
-The MCP server is launched with `--output-dir .browser-automation` (see `.mcp.json`), so any relative `filename:` you pass to a tool resolves there — *not* into the project root. `.browser-automation/` is conventionally gitignored, so debug artifacts won't dirty the working tree.
+### 3. Launch a fresh in-memory profile (only when no persistence is needed)
 
-- **Default** (no `filename`): files land at `.browser-automation/page-<timestamp>.png` etc. Safe.
-- **Relative path** (e.g. `filename: "shop-after-fix.png"`): goes to `.browser-automation/shop-after-fix.png`. Still safe.
-- **Absolute path** (e.g. `filename: "/tmp/foo.png"`): goes exactly there — use only when you specifically need the file outside the project (e.g. sharing across sessions).
+```bash
+playwright-cli -s=session-name open https://example.com
+```
 
-Do **not** pass paths like `./foo.png`, `../foo.png`, or bare names that depend on cwd — the MCP's notion of "output dir" is what matters, not the agent's cwd. If you find loose `*.png` files at the repo root, an older MCP config (without `--output-dir`) is in use; update `.mcp.json` accordingly.
+Useful for smoke tests and one-shot scrapes where you don't care about cookies after the run.
 
-If `.browser-automation/` isn't in the project's `.gitignore`, add it.
+## The patterns that matter at parallel scale
 
-## Usage Pattern
+### Named sessions — one per Claude Code tab
 
-1. Always check prerequisites (Node.js + Chrome) first
-2. Launch Chrome with remote debugging if not running (see Setup above)
-3. **Open a new tab** with `browser_tabs` (action: "new", url: target URL) — never navigate in an existing tab the user may be using
-4. Take a snapshot with `browser_snapshot` to see the page structure
-5. Interact using `browser_click`, `browser_type`, etc. using refs from the snapshot
-6. Take new snapshots after interactions to verify state changes
+Multiple concurrent Claude Code sessions stomping on a single shared browser is a recipe for confusion. Use a named session per tab so each one has its own isolated browser + storage:
+
+```bash
+playwright-cli -s=tab1 open https://app.example.com
+playwright-cli -s=tab1 snapshot
+playwright-cli -s=tab1 close
+```
+
+Or set it once for the whole Claude Code session via env var so you don't have to repeat the flag:
+
+```bash
+export PLAYWRIGHT_CLI_SESSION="$(basename "$PWD")-$(date +%s)"
+playwright-cli open https://app.example.com
+# every subsequent playwright-cli call in this shell uses that session
+```
+
+List or close sessions:
+
+```bash
+playwright-cli list
+playwright-cli close-all
+playwright-cli kill-all   # last resort for stale processes
+```
+
+### Authenticated dashboards — log in once, reuse forever
+
+For sites where the same auth state will be reused across many runs (Cloudflare dashboard, Porkbun, GitHub web UI, anything without a real API):
+
+```bash
+# First time — interactive login (headed by default thanks to cli.config.json)
+playwright-cli -s=cf attach --cdp=http://localhost:9223      # if a CDP Chrome is up
+# …or, fallback:
+# playwright-cli -s=cf open https://dash.cloudflare.com --profile="$HOME/Library/Application Support/Google/Chrome/browser-automation"
+
+# (user completes login in the opened tab)
+playwright-cli -s=cf state-save ~/.config/playwright-cli/cf-auth.json
+playwright-cli -s=cf detach     # if attached; or `close` for managed
+
+# Later runs — restore without re-logging-in
+playwright-cli -s=cf attach --cdp=http://localhost:9223
+# state-load only needed if not using the persistent profile that already carries the cookies:
+# playwright-cli -s=cf state-load ~/.config/playwright-cli/cf-auth.json
+```
+
+Once authenticated, pull individual cookies for downstream `curl`/`fetch` calls:
+
+```bash
+TOKEN=$(playwright-cli --raw -s=cf cookie-get __Secure-3PSID)
+curl -H "Cookie: __Secure-3PSID=$TOKEN" https://dash.cloudflare.com/api/v4/accounts
+```
+
+### Output files land in `.browser-automation/`
+
+With the recommended `cli.config.json`, snapshots and screenshots are written under `.browser-automation/` in the current working directory. For shareable outputs, pass `--filename=absolute/or/relative/path.png` explicitly.
+
+## Cleanup
+
+```bash
+playwright-cli detach         # release an attached external browser (leaves it running)
+playwright-cli close          # close a managed session
+playwright-cli close-all      # close every managed session
+playwright-cli delete-data    # delete on-disk profile for a persistent session
+```
+
+There's no daemon to babysit between runs — the browser process is tied to the session and exits on `close`.
 
 ## Troubleshooting
 
-- **MCP server shows "failed"**: Most likely Node.js is not installed or not in PATH. Run `which node` to check. Install via `brew install node`, then restart Claude Code.
-- **Chrome won't launch**: Verify Chrome is installed at `/Applications/Google Chrome.app`
-- **Port conflict**: If port 9223 is in use, another Chrome debug instance may be running. Check with `lsof -i :9223`.
-- **CAPTCHA challenges**: May appear as empty snapshots — retry or navigate directly
-
-## Notes
-
-- The `browser-automation` profile is separate from your normal Chrome profile — no conflicts
-- Logins persist between sessions, so you only need to authenticate once per site
-- For pages with very large or complex DOMs, prefer `browser_run_code` over `browser_snapshot`
-- Some pages load slowly — wait a few seconds after navigation before taking snapshots
+- **`playwright-cli: command not found`** — install missed PATH; fall back to `npx --no-install playwright-cli` or re-run `npm install -g @playwright/cli@latest`.
+- **`browser not installed`** — run `playwright-cli install-browser`.
+- **`Browser is already in use`** when launching with `--profile=...` — Chrome is already running on that profile. Either attach via CDP (preferred), or quit the existing Chrome before re-launching, or pass `--isolated` (loses state).
+- **CAPTCHA / bot challenges** — expected on heavily-protected sites; re-run after pausing, or fall back to a vendor API/CLI if one exists.
+- **Stale session** — `playwright-cli kill-all` then re-open. Persistent profile state on disk survives.
+- **Snapshot looks empty after navigation** — the page is still loading. Re-run `snapshot` after a short wait or after a known element appears (`playwright-cli eval "document.readyState"`).
