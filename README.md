@@ -21,6 +21,7 @@ And the first time it runs in a workspace, it will write `.playwright/cli.config
 ## What it ships
 
 - A `/browser` skill that documents the setup, the parallel-session pattern, and the auth-persistence flow.
+- `scripts/launch-chrome.sh` — idempotent launcher for the canonical long-running Chrome on `--remote-debugging-port=9223` with the `browser-automation` profile, which the skill then attaches to via CDP.
 - A pointer to the upstream `playwright-cli` SKILL.md (shipped inside the CLI) for the full command reference — read on demand, no duplication.
 
 ## What changed in 0.2.0

@@ -69,7 +69,9 @@ Touch points worth remembering from that file:
 
 | Need | Command |
 |---|---|
-| Open & navigate | `playwright-cli open https://example.com` |
+| Start a managed browser | `playwright-cli -s=<name> open [url]` — launches a new Playwright-managed Chrome |
+| Attach to an existing CDP Chrome | `playwright-cli -s=<name> attach --cdp=http://localhost:9223` |
+| Navigate inside an already-open/attached session | `playwright-cli -s=<name> goto https://example.com` |
 | Get refs for clicking | `playwright-cli snapshot` — returns `e1`, `e2`, … refs |
 | Click / type / fill | `playwright-cli click e5`, `playwright-cli fill e7 "value" --submit` |
 | Run JS in the page | `playwright-cli eval "document.title"` |
@@ -79,6 +81,8 @@ Touch points worth remembering from that file:
 | Detach (keep external browser running) | `playwright-cli detach` |
 | Close | `playwright-cli close` |
 
+> **⚠️ `open` vs `goto` — the one footgun to remember.** `open` *creates a browser*; `goto` *navigates the current one*. After `attach`, **never** use `open <url>` to "go somewhere" — playwright-cli 0.1.x silently spawns a fresh headless in-memory Chrome (temp profile, no cookies, attached browser sits idle, session's `attached` flag flips to `false`). Use `goto` instead. If you're unsure whether a session exists, `playwright-cli list` tells you.
+
 ## Picking the right browser source
 
 There are three ways to get a browser. Try them in this order:
@@ -87,15 +91,49 @@ There are three ways to get a browser. Try them in this order:
 
 If a long-running Chrome instance is already up with `--remote-debugging-port=9223` (the convention this plugin grew up with), attach to it. All existing logins, cookies, and tabs are reused immediately — no re-auth, no profile copy, no risk of losing state.
 
-```bash
-playwright-cli -s=session-name attach --cdp=http://localhost:9223
-```
-
 How to know whether one is running:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:9223/json/version
-# 200 → attach. 000 or non-200 → no CDP browser available, fall through to (2) or (3).
+# 200 → attach. 000 or non-200 → no CDP browser available, launch one (below) or fall through to (2)/(3).
+```
+
+#### Launching the canonical Chrome on :9223 (when one isn't already running)
+
+The plugin ships `scripts/launch-chrome.sh`, which is the single source of truth for this command. It's idempotent — safe to call even when Chrome is already up — and on macOS uses the conventional profile path `$HOME/Library/Application Support/Google/Chrome/browser-automation`:
+
+```bash
+# From the plugin checkout:
+./scripts/launch-chrome.sh
+
+# Or, equivalent one-liner if you don't have the plugin checked out:
+nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9223 \
+  --user-data-dir="$HOME/Library/Application Support/Google/Chrome/browser-automation" \
+  --no-first-run --no-default-browser-check 'about:blank' \
+  >/tmp/chrome-9223.log 2>&1 & disown
+```
+
+Override the profile path via `BROWSER_AUTOMATION_PROFILE=...` if needed. The script waits up to 5s for the CDP endpoint to come up before returning.
+
+#### Attaching
+
+```bash
+playwright-cli -s=session-name attach --cdp=http://localhost:9223
+```
+
+Then navigate **with `goto`, not `open`** (see the footgun callout in the touch-points table above):
+
+```bash
+playwright-cli -s=session-name goto https://example.com
+playwright-cli -s=session-name snapshot
+```
+
+Verify the attach actually held, especially if a previous run might have left the session in a weird state:
+
+```bash
+playwright-cli list --json | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["browsers"][0]["attached"]))'
+# true → good. false → see "Known upstream gotchas" below.
 ```
 
 When you're done, **`detach`** instead of `close` — `close` may terminate the external browser the user is sharing with you.
@@ -113,7 +151,7 @@ playwright-cli -s=session-name open https://example.com \
   --profile="$HOME/Library/Application Support/Google/Chrome/browser-automation"
 ```
 
-The profile must not be in use by another Chrome process — Chrome will refuse to start with a locked profile.
+The profile must not be in use by another Chrome process — Chrome will refuse to start with a locked profile. (`open` is fine here because there is no session yet — see the footgun callout for why `open` is wrong *after* a session is already attached.)
 
 ### 3. Launch a fresh in-memory profile (only when no persistence is needed)
 
@@ -130,16 +168,18 @@ Useful for smoke tests and one-shot scrapes where you don't care about cookies a
 Multiple concurrent Claude Code sessions stomping on a single shared browser is a recipe for confusion. Use a named session per tab so each one has its own isolated browser + storage:
 
 ```bash
-playwright-cli -s=tab1 open https://app.example.com
+playwright-cli -s=tab1 attach --cdp=http://localhost:9223    # or `open` if no CDP Chrome
+playwright-cli -s=tab1 goto https://app.example.com
 playwright-cli -s=tab1 snapshot
-playwright-cli -s=tab1 close
+playwright-cli -s=tab1 detach                                # or `close` if managed
 ```
 
-Or set it once for the whole Claude Code session via env var so you don't have to repeat the flag:
+Or set the session name once for the whole Claude Code session via env var so you don't have to repeat the flag:
 
 ```bash
 export PLAYWRIGHT_CLI_SESSION="$(basename "$PWD")-$(date +%s)"
-playwright-cli open https://app.example.com
+playwright-cli attach --cdp=http://localhost:9223
+playwright-cli goto https://app.example.com
 # every subsequent playwright-cli call in this shell uses that session
 ```
 
@@ -158,7 +198,8 @@ For sites where the same auth state will be reused across many runs (Cloudflare 
 ```bash
 # First time — interactive login (headed by default thanks to cli.config.json)
 playwright-cli -s=cf attach --cdp=http://localhost:9223      # if a CDP Chrome is up
-# …or, fallback:
+playwright-cli -s=cf goto https://dash.cloudflare.com        # navigate within the attached Chrome
+# …or, fallback when no CDP Chrome is running:
 # playwright-cli -s=cf open https://dash.cloudflare.com --profile="$HOME/Library/Application Support/Google/Chrome/browser-automation"
 
 # (user completes login in the opened tab)
@@ -167,6 +208,7 @@ playwright-cli -s=cf detach     # if attached; or `close` for managed
 
 # Later runs — restore without re-logging-in
 playwright-cli -s=cf attach --cdp=http://localhost:9223
+playwright-cli -s=cf goto https://dash.cloudflare.com
 # state-load only needed if not using the persistent profile that already carries the cookies:
 # playwright-cli -s=cf state-load ~/.config/playwright-cli/cf-auth.json
 ```
@@ -193,11 +235,21 @@ playwright-cli delete-data    # delete on-disk profile for a persistent session
 
 There's no daemon to babysit between runs — the browser process is tied to the session and exits on `close`.
 
+## Known upstream gotchas (`@playwright/cli` 0.1.x)
+
+These are quirks of the upstream CLI, not bugs in this plugin. The plugin's job is to keep you from tripping on them.
+
+- **`open` after `attach` silently replaces the session with a new headless in-memory Chrome.** If you `attach --cdp=...` and then run `open <url>`, the CLI spawns a fresh Playwright-managed Chrome with a temp `--user-data-dir` (`/var/folders/.../playwright_chromiumdev_profile-XXXX`), navigates *that* one, and flips your session's `attached` flag to `false`. Your originally-attached Chrome sits idle, cookies-less navigation hits auth walls, and `playwright-cli list` will show the session as no longer attached even though `attach` reported success seconds earlier. **Workaround:** after `attach`, only use `goto` to navigate. Reserve `open` for *creating* a brand-new managed session when nothing is attached.
+- **`detach` errors with "session not attached" after the `open`-after-`attach` slip.** Once `open` has replaced an attached session with a managed in-memory one, the only cleanup is `playwright-cli -s=<name> close` (or `playwright-cli close-all`). The error message already points to `close`, so follow it.
+- **Recovering a wedged session.** If `list` shows a session in a state you don't recognise — `attached: false` after a fresh attach, in-memory data dir, etc. — run `playwright-cli close-all` (or `playwright-cli -s=<name> close`) and re-attach from scratch. Persistent profile state on disk survives.
+
 ## Troubleshooting
 
 - **`playwright-cli: command not found`** — install missed PATH; fall back to `npx --no-install playwright-cli` or re-run `npm install -g @playwright/cli@latest`.
 - **`browser not installed`** — run `playwright-cli install-browser`.
+- **No Chrome on :9223 to attach to** — run `./scripts/launch-chrome.sh` from the plugin checkout, or the equivalent one-liner from the "Launching the canonical Chrome on :9223" section above.
 - **`Browser is already in use`** when launching with `--profile=...` — Chrome is already running on that profile. Either attach via CDP (preferred), or quit the existing Chrome before re-launching, or pass `--isolated` (loses state).
+- **Session unexpectedly headless / no cookies after `attach`** — you almost certainly ran `open <url>` instead of `goto <url>` after attaching. See "Known upstream gotchas" above.
 - **CAPTCHA / bot challenges** — expected on heavily-protected sites; re-run after pausing, or fall back to a vendor API/CLI if one exists.
 - **Stale session** — `playwright-cli kill-all` then re-open. Persistent profile state on disk survives.
 - **Snapshot looks empty after navigation** — the page is still loading. Re-run `snapshot` after a short wait or after a known element appears (`playwright-cli eval "document.readyState"`).
