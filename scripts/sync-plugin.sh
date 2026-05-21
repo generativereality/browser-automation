@@ -22,17 +22,19 @@ fi
 
 ERRORS=0
 
-# Check skill file match
-if ! diff -q "$REPO_ROOT/skills/browser/SKILL.md" "$PLUGINS_DIR/plugins/browser-automation/skills/browser/SKILL.md" >/dev/null 2>&1; then
-  echo "MISMATCH: skills/browser/SKILL.md differs from plugins repo"
-  ERRORS=1
-fi
+# Files that ship inside the plugin payload. Relative to repo root.
+PAYLOAD_FILES=(
+  "skills/browser/SKILL.md"
+  ".claude-plugin/plugin.json"
+  "scripts/launch-chrome.sh"
+)
 
-# Check plugin.json match
-if ! diff -q "$REPO_ROOT/.claude-plugin/plugin.json" "$PLUGINS_DIR/plugins/browser-automation/.claude-plugin/plugin.json" >/dev/null 2>&1; then
-  echo "MISMATCH: .claude-plugin/plugin.json differs from plugins repo"
-  ERRORS=1
-fi
+for rel in "${PAYLOAD_FILES[@]}"; do
+  if ! diff -q "$REPO_ROOT/$rel" "$PLUGINS_DIR/plugins/browser-automation/$rel" >/dev/null 2>&1; then
+    echo "MISMATCH: $rel differs from plugins repo"
+    ERRORS=1
+  fi
+done
 
 if [ "$CHECK_ONLY" = true ]; then
   if [ "$ERRORS" -ne 0 ]; then
@@ -45,9 +47,10 @@ if [ "$CHECK_ONLY" = true ]; then
 fi
 
 # Sync files
-mkdir -p "$PLUGINS_DIR/plugins/browser-automation/.claude-plugin" "$PLUGINS_DIR/plugins/browser-automation/skills/browser"
-cp "$REPO_ROOT/.claude-plugin/plugin.json" "$PLUGINS_DIR/plugins/browser-automation/.claude-plugin/plugin.json"
-cp "$REPO_ROOT/skills/browser/SKILL.md" "$PLUGINS_DIR/plugins/browser-automation/skills/browser/SKILL.md"
+for rel in "${PAYLOAD_FILES[@]}"; do
+  mkdir -p "$(dirname "$PLUGINS_DIR/plugins/browser-automation/$rel")"
+  cp -p "$REPO_ROOT/$rel" "$PLUGINS_DIR/plugins/browser-automation/$rel"
+done
 
 # Remove .mcp.json from plugins repo if it lingers from an older sync (the plugin no longer ships an MCP server).
 rm -f "$PLUGINS_DIR/plugins/browser-automation/.mcp.json"
