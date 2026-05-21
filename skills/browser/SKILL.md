@@ -8,6 +8,8 @@ allowed-tools: Bash(playwright-cli:*) Bash(npx:*) Bash(npm:*)
 
 This skill drives the browser through Microsoft's official `@playwright/cli` — a plain CLI, no MCP server. Each invocation is a normal Bash call that returns a page snapshot reference on stdout.
 
+**Core principle: always reuse the persistent `browser-automation` Chrome profile.** Every flow in this skill — first login, repeat run, parallel tabs — drives the same long-running Chrome at `--remote-debugging-port=9223` with `--user-data-dir=$HOME/Library/Application Support/Google/Chrome/browser-automation`. Ephemeral or in-memory profiles are off the table: they throw away cookies and force the user to re-auth on every run.
+
 ## When to reach for this
 
 - You need to interact with a dashboard, form, or app that has no API or no public CLI.
@@ -81,13 +83,15 @@ Touch points worth remembering from that file:
 | Detach (keep external browser running) | `playwright-cli detach` |
 | Close | `playwright-cli close` |
 
-> **⚠️ `open` vs `goto` — the one footgun to remember.** `open` *creates a browser*; `goto` *navigates the current one*. After `attach`, **never** use `open <url>` to "go somewhere" — playwright-cli 0.1.x silently spawns a fresh headless in-memory Chrome (temp profile, no cookies, attached browser sits idle, session's `attached` flag flips to `false`). Use `goto` instead. If you're unsure whether a session exists, `playwright-cli list` tells you.
+> **⚠️ `open` vs `goto` — the one footgun to remember.** `open` *creates a browser*; `goto` *navigates the current one*. After `attach`, **never** use `open <url>` to "go somewhere" — playwright-cli 0.1.x silently spawns a fresh headless in-memory Chrome (temp `--user-data-dir`, no cookies, attached browser sits idle, session's `attached` flag flips to `false`). That throws away the persistent `browser-automation` profile this skill is built around. Use `goto` instead. If you're unsure whether a session exists, `playwright-cli list` tells you.
 
 ## Picking the right browser source
 
-There are three ways to get a browser. Try them in this order:
+**The rule:** always drive the canonical persistent `browser-automation` Chrome profile. Never fall back to an ephemeral or in-memory profile — every such fallback throws away logins, cookies, and tab state that took the user real effort to build, and the next run hits auth walls. The profile is named `browser-automation` and lives at `$HOME/Library/Application Support/Google/Chrome/browser-automation` on macOS.
 
-### 1. Attach to a running Chrome on port 9223 (best when available)
+There are exactly two ways to drive that profile. Try them in this order:
+
+### 1. Attach to a running Chrome on port 9223 (preferred)
 
 If a long-running Chrome instance is already up with `--remote-debugging-port=9223` (the convention this plugin grew up with), attach to it. All existing logins, cookies, and tabs are reused immediately — no re-auth, no profile copy, no risk of losing state.
 
@@ -142,24 +146,22 @@ When you're done, **`detach`** instead of `close` — `close` may terminate the 
 playwright-cli -s=session-name detach
 ```
 
-### 2. Launch a managed Chrome on an existing profile
+### 2. Launch a managed Chrome pointed at the `browser-automation` profile (fallback)
 
-If no CDP-enabled Chrome is running, launch a fresh Playwright-managed Chrome but point it at an existing persistent profile dir:
+Use this **only** if you can't run `scripts/launch-chrome.sh` (e.g. you're inside a sandbox that won't spawn a long-lived background process). It's strictly worse than option 1, because the Chrome dies when the session ends and other tabs can't share it. But it still drives the canonical persistent profile, so cookies and logins survive across runs:
 
 ```bash
 playwright-cli -s=session-name open https://example.com \
   --profile="$HOME/Library/Application Support/Google/Chrome/browser-automation"
 ```
 
-The profile must not be in use by another Chrome process — Chrome will refuse to start with a locked profile. (`open` is fine here because there is no session yet — see the footgun callout for why `open` is wrong *after* a session is already attached.)
+The profile must not be in use by another Chrome process — Chrome will refuse to start with a locked profile. If it's locked, that means a real Chrome is already running on this profile; prefer option 1 and attach to that one instead.
 
-### 3. Launch a fresh in-memory profile (only when no persistence is needed)
+(`open` is fine here because there is no session yet — see the footgun callout for why `open` is wrong *after* a session is already attached.)
 
-```bash
-playwright-cli -s=session-name open https://example.com
-```
+### What NOT to do — never use an ephemeral or in-memory profile
 
-Useful for smoke tests and one-shot scrapes where you don't care about cookies after the run.
+`playwright-cli open <url>` *without* `--profile=...` (or worse, after an `attach`, where `open` silently swaps in a temp in-memory profile — see the footgun callout) launches Chrome with a throwaway `--user-data-dir=/var/folders/.../playwright_chromiumdev_profile-XXXX`. **Don't do this for any task in this skill.** The point of the skill is to reuse cookies and logins; ephemeral profiles defeat that, and you'll waste a real human's time re-authenticating on the next run. If a snapshot/test really needs an isolated profile, use a different tool — not this skill.
 
 ## The patterns that matter at parallel scale
 
@@ -168,10 +170,12 @@ Useful for smoke tests and one-shot scrapes where you don't care about cookies a
 Multiple concurrent Claude Code sessions stomping on a single shared browser is a recipe for confusion. Use a named session per tab so each one has its own isolated browser + storage:
 
 ```bash
-playwright-cli -s=tab1 attach --cdp=http://localhost:9223    # or `open` if no CDP Chrome
+# Make sure the canonical Chrome is up, then attach.
+./scripts/launch-chrome.sh                                   # idempotent
+playwright-cli -s=tab1 attach --cdp=http://localhost:9223
 playwright-cli -s=tab1 goto https://app.example.com
 playwright-cli -s=tab1 snapshot
-playwright-cli -s=tab1 detach                                # or `close` if managed
+playwright-cli -s=tab1 detach                                # never `close` — that would kill the shared Chrome
 ```
 
 Or set the session name once for the whole Claude Code session via env var so you don't have to repeat the flag:
@@ -197,21 +201,21 @@ For sites where the same auth state will be reused across many runs (Cloudflare 
 
 ```bash
 # First time — interactive login (headed by default thanks to cli.config.json)
-playwright-cli -s=cf attach --cdp=http://localhost:9223      # if a CDP Chrome is up
+./scripts/launch-chrome.sh                                   # ensure :9223 Chrome is up
+playwright-cli -s=cf attach --cdp=http://localhost:9223
 playwright-cli -s=cf goto https://dash.cloudflare.com        # navigate within the attached Chrome
-# …or, fallback when no CDP Chrome is running:
+# …or, fallback only when you genuinely can't run a long-lived Chrome (sandboxed env, etc.):
 # playwright-cli -s=cf open https://dash.cloudflare.com --profile="$HOME/Library/Application Support/Google/Chrome/browser-automation"
 
-# (user completes login in the opened tab)
-playwright-cli -s=cf state-save ~/.config/playwright-cli/cf-auth.json
-playwright-cli -s=cf detach     # if attached; or `close` for managed
+# (user completes login in the opened tab; cookies land in the persistent profile)
+playwright-cli -s=cf detach     # detach; the Chrome stays up for the next run
 
-# Later runs — restore without re-logging-in
+# Later runs — the persistent profile already has the cookies; just attach and go.
 playwright-cli -s=cf attach --cdp=http://localhost:9223
 playwright-cli -s=cf goto https://dash.cloudflare.com
-# state-load only needed if not using the persistent profile that already carries the cookies:
-# playwright-cli -s=cf state-load ~/.config/playwright-cli/cf-auth.json
 ```
+
+`state-save` / `state-load` exist for moving auth between machines or backing it up, but for normal day-to-day use you don't need them — the `browser-automation` profile already carries every cookie across runs.
 
 Once authenticated, pull individual cookies for downstream `curl`/`fetch` calls:
 
@@ -248,7 +252,7 @@ These are quirks of the upstream CLI, not bugs in this plugin. The plugin's job 
 - **`playwright-cli: command not found`** — install missed PATH; fall back to `npx --no-install playwright-cli` or re-run `npm install -g @playwright/cli@latest`.
 - **`browser not installed`** — run `playwright-cli install-browser`.
 - **No Chrome on :9223 to attach to** — run `./scripts/launch-chrome.sh` from the plugin checkout, or the equivalent one-liner from the "Launching the canonical Chrome on :9223" section above.
-- **`Browser is already in use`** when launching with `--profile=...` — Chrome is already running on that profile. Either attach via CDP (preferred), or quit the existing Chrome before re-launching, or pass `--isolated` (loses state).
+- **`Browser is already in use`** when launching with `--profile=...` — a real Chrome is already running on the `browser-automation` profile. That's the canonical state; don't quit it. Attach via CDP instead: `playwright-cli -s=<name> attach --cdp=http://localhost:9223`. Never pass `--isolated` here — it abandons the persistent profile this skill is built around.
 - **Session unexpectedly headless / no cookies after `attach`** — you almost certainly ran `open <url>` instead of `goto <url>` after attaching. See "Known upstream gotchas" above.
 - **CAPTCHA / bot challenges** — expected on heavily-protected sites; re-run after pausing, or fall back to a vendor API/CLI if one exists.
 - **Stale session** — `playwright-cli kill-all` then re-open. Persistent profile state on disk survives.
