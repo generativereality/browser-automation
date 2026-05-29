@@ -178,6 +178,30 @@ playwright-cli -s=tab1 snapshot
 playwright-cli -s=tab1 detach                                # never `close` — that would kill the shared Chrome
 ```
 
+### Always open a **dedicated tab** for the task and pin to it
+
+`-s=<name>` isolates Playwright session state (cookies file, storage state, etc.), but **named sessions on the same CDP browser share the same physical Chrome tabs**. Whichever tab Chrome considers "active" is the one your `snapshot` / `click` / `fill` reads from. If anything else changes the active tab — the user clicking a tab, another Claude Code session calling `tab-select`, a chat widget auto-focusing — your next snapshot suddenly captures Blocket or Gmail and every ref you cached goes stale.
+
+The only reliable fix: at the start of every task, create a fresh tab with `tab-new <url>`, remember its index from `tab-list`, and treat it as your tab for the duration of the task.
+
+```bash
+# Start of task: open a tab dedicated to this work and pin to it.
+playwright-cli -s=cf tab-new https://dash.cloudflare.com/profile/api-tokens
+MY_TAB=$(playwright-cli -s=cf tab-list --json | python3 -c \
+  'import json,sys; ts=json.load(sys.stdin)["tabs"]; print(next(i for i,t in enumerate(ts) if t.get("current")))')
+echo "task tab = $MY_TAB"
+```
+
+Use the same `$MY_TAB` value any time you suspect another tab might have become active — e.g. after a long-running navigation, after the user pings you mid-task, or before any `snapshot`-and-act sequence where stale refs would silently target the wrong page. **Don't blindly run `tab-select $MY_TAB` before every command** (see the focus-stealing footgun in "Known upstream gotchas") — only when you have a reason to believe the active tab moved.
+
+When the task is done, `tab-close $MY_TAB` to clean up.
+
+#### Why `-s=<name>` alone isn't enough
+
+A named session in `playwright-cli` is a Node-side bookkeeping construct — it has its own auth state and its own "current page" handle. But on the wire, `attach --cdp=http://localhost:9223` connects every session to the same Chrome browser; that Chrome has exactly one set of tabs, exactly one "active" tab at a time. Two Claude Code sessions both running `-s=mine attach --cdp=...` are looking at the same tabs through different Node processes — the second one to call `tab-select` (or any action that activates a tab) wins. Sessions don't fence each other; tabs do.
+
+If you genuinely need full browser-level isolation (separate cookies, separate tab list), don't share the `:9223` Chrome — use option 2 (launch a managed Chrome on a different profile) or option 3 of the skill's fallback path. But you almost never need that; pinning to your own tab inside the shared Chrome is usually fine.
+
 Or set the session name once for the whole Claude Code session via env var so you don't have to repeat the flag:
 
 ```bash
@@ -246,6 +270,10 @@ These are quirks of the upstream CLI, not bugs in this plugin. The plugin's job 
 - **`open` after `attach` silently replaces the session with a new headless in-memory Chrome.** If you `attach --cdp=...` and then run `open <url>`, the CLI spawns a fresh Playwright-managed Chrome with a temp `--user-data-dir` (`/var/folders/.../playwright_chromiumdev_profile-XXXX`), navigates *that* one, and flips your session's `attached` flag to `false`. Your originally-attached Chrome sits idle, cookies-less navigation hits auth walls, and `playwright-cli list` will show the session as no longer attached even though `attach` reported success seconds earlier. **Workaround:** after `attach`, only use `goto` to navigate. Reserve `open` for *creating* a brand-new managed session when nothing is attached.
 - **`detach` errors with "session not attached" after the `open`-after-`attach` slip.** Once `open` has replaced an attached session with a managed in-memory one, the only cleanup is `playwright-cli -s=<name> close` (or `playwright-cli close-all`). The error message already points to `close`, so follow it.
 - **Recovering a wedged session.** If `list` shows a session in a state you don't recognise — `attached: false` after a fresh attach, in-memory data dir, etc. — run `playwright-cli close-all` (or `playwright-cli -s=<name> close`) and re-attach from scratch. Persistent profile state on disk survives.
+- **`tab-select` and `osascript activate "Google Chrome"` raise Chrome to the foreground on macOS — every call.** Calling either one in a tight loop (e.g. before every `snapshot`) yanks focus away from the user's frontmost app on every turn. Even worse: if the user clicks back to their previous app, your next `tab-select` snatches focus again 200ms later. **Workaround:** only call `tab-select` when you have evidence the active tab actually moved off your pinned tab (e.g. a previous `snapshot` returned content from the wrong URL). Don't preemptively re-select before every command, and never call `osascript activate "Google Chrome"` — your tab is already the right target inside CDP.
+- **Element refs (`e1`, `e2`, …) go stale after every action, not just every navigation.** `playwright-cli` re-generates the ref table on every `snapshot`; a `click` that re-renders even a small part of the page (e.g. a dropdown expanding) shifts every subsequent ref's numbering. **Workaround:** snapshot → use the refs from THAT snapshot → re-snapshot before reusing refs. Treat refs as good for exactly one action. If you cache a ref string in a shell variable and try to use it two operations later, expect "Ref eN not found in the current page snapshot".
+- **Multi-step forms across page transitions.** Cloudflare-style flows where each "Continue" navigates to a new page reset the entire ref table, often with no visible URL change. Always re-snapshot after any button click that's intended to advance a wizard step, and never assume refs survive a navigation.
+- **`tab-list` indices are not stable across `tab-close` calls.** When another session (or the user) closes a tab to your left, your tab's index decreases by one. If you cached `MY_TAB=5` and tab 2 gets closed, your task tab is now index 4. Either re-resolve from `tab-list --json` by matching on URL/title before each `tab-select`, or accept that long-lived tasks should periodically refresh the index.
 
 ## Troubleshooting
 
