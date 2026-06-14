@@ -138,6 +138,42 @@ export function fillExpr(ref: string, value: string, submit: boolean): string {
   })()`
 }
 
+/** Focus + scroll an element by ref and select-all its existing value. Used by
+ *  `fill --native`: the actual character insertion is then driven via CDP
+ *  Input.insertText, which fires trusted events that controlled React forms
+ *  (RHF, Final Form, Formik Controller) actually subscribe to. */
+export function focusAndSelectExpr(ref: string): string {
+  const r = JSON.stringify(ref)
+  return WALK + `(() => {
+    const el=__baFind(${r});
+    if(!el)return {err:'ref not found: '+${r}+' (re-run snapshot)'};
+    el.scrollIntoView({block:'center',inline:'center'});
+    el.focus();
+    try{ if(typeof el.select==='function') el.select(); }catch(e){}
+    return {ok:true,tag:el.tagName.toLowerCase(),len:el.value!==undefined?String(el.value).length:0};
+  })()`
+}
+
+/** Re-read an input/textarea/contenteditable's effective value AND, when present,
+ *  React's internal `_valueTracker.getValue()` — which is what React's onChange
+ *  fires on. A divergence between the two is the canonical signature of
+ *  "DOM value set but React form-state stayed stale" (the controlled-form
+ *  stickiness gotcha — see SKILL.md). Also reports whether a React fiber is
+ *  attached at all, so callers can tell "controlled component" from "plain DOM". */
+export function readValueAndTrackerExpr(ref: string): string {
+  const r = JSON.stringify(ref)
+  return WALK + `(() => {
+    const el=__baFind(${r});
+    if(!el)return {err:'ref not found: '+${r}+' (re-run snapshot)'};
+    const value=el.value!==undefined?String(el.value):(el.isContentEditable?(el.textContent||''):'');
+    let trackerValue=null;
+    try{ const t=el._valueTracker; if(t&&typeof t.getValue==='function') trackerValue=String(t.getValue()); }catch(e){}
+    let hasReactFiber=false;
+    try{ hasReactFiber=Object.keys(el).some(k=>k.startsWith('__reactProps$')||k.startsWith('__reactFiber$')); }catch(e){}
+    return {value,trackerValue,hasReactFiber};
+  })()`
+}
+
 export function readExpr(selector?: string): string {
   const root = selector ? `__baQuery(${JSON.stringify(selector)})` : `document.body`
   const notFound = selector ? `'(no element matches ' + ${JSON.stringify(selector)} + ')'` : `''`
