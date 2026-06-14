@@ -84,6 +84,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Evaluate JS in the tab (escape hatch) | `browser-automation eval -m op.fi 'document.title'` |
 | Download a file / CSV export | `browser-automation download -m bank --click e42` (or `--url <href>`) |
 | Inspect network (find the API, headers, bodies) | `browser-automation network -m bank --reload --filter api --headers --body` |
+| Screenshot a tab | `browser-automation screenshot -m op.fi --full -o shot.png` |
 | Forget a session (tab stays open) | `browser-automation close -s work` |
 | Forget **and** close the browser tab | `browser-automation close -s work --tab` |
 

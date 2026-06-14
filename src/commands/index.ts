@@ -9,6 +9,7 @@ import { readCommand } from './read.js'
 import { evalCommand } from './eval.js'
 import { downloadCommand } from './download.js'
 import { networkCommand } from './network.js'
+import { screenshotCommand } from './screenshot.js'
 import { listCommand } from './list.js'
 import { closeCommand } from './close.js'
 import { bindCommand } from './bind.js'
@@ -35,6 +36,8 @@ const subCommands = new Map<string, Command<any>>([
   ['eval', evalCommand],
   ['download', downloadCommand],
   ['network', networkCommand],
+  ['screenshot', screenshotCommand],
+  ['shot', screenshotCommand],
   ['list', listCommand],
   ['ls', listCommand],
   ['close', closeCommand],

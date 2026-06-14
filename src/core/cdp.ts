@@ -200,6 +200,14 @@ export async function evaluateUntil<T = any>(
   return last
 }
 
+/** Capture a PNG screenshot of a page target (optionally the full page). */
+export async function captureScreenshot(targetId: string, { fullPage = false }: { fullPage?: boolean } = {}): Promise<Buffer> {
+  return withPage(targetId, async (s) => {
+    const r = await s.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: fullPage })
+    return Buffer.from(r.data, 'base64')
+  })
+}
+
 /** Navigate a page target and wait for load (or timeout). */
 export async function navigate(targetId: string, url: string, { timeout = 30000 } = {}): Promise<void> {
   return withPage(targetId, async (s) => {
