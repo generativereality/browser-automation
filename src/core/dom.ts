@@ -18,7 +18,7 @@ export interface SnapshotResult {
   url: string
   title: string
   count: number
-  elements: Array<{ ref: string; role: string; tag: string; type: string; name: string }>
+  elements: Array<{ ref: string; role: string; tag: string; type: string; name: string; state: string }>
 }
 
 // Shared walker prelude: descends light DOM, open shadow roots, and same-origin
@@ -57,21 +57,41 @@ function __baText(root){
 }
 `
 
-const INTERACTIVE = `'a,button,input,select,textarea,summary,[role=button],[role=link],[role=tab],[role=checkbox],[role=radio],[role=menuitem],[role=switch],[onclick],[contenteditable=""],[contenteditable=true]'`
+const INTERACTIVE = `'a,button,input,select,textarea,summary,label,[role=button],[role=link],[role=tab],[role=checkbox],[role=radio],[role=option],[role=menuitem],[role=switch],[onclick],[contenteditable=""],[contenteditable=true]'`
 
 export const SNAPSHOT_EXPR = WALK + `(() => {
   __baEachEl((el)=>{ if(el.getAttribute && el.getAttribute('data-ba-ref')) el.removeAttribute('data-ba-ref'); });
-  const isInteractive=(el)=>{try{return el.matches(${INTERACTIVE});}catch(e){return false;}};
+  const ptr=(el)=>{try{return getComputedStyle(el).cursor==='pointer';}catch(e){return false;}};
+  // Interactive = semantic control, OR focusable (tabindex>=0), OR the OUTERMOST
+  // element in a cursor:pointer chain (catches React clickable <div>s without
+  // dragging in their pointer-inheriting children or huge containers).
+  const isInteractive=(el)=>{
+    try{ if(el.matches(${INTERACTIVE})) return true; }catch(e){}
+    const ti=el.getAttribute&&el.getAttribute('tabindex');
+    if(ti!=null&&parseInt(ti,10)>=0) return true;
+    if(ptr(el)){ const p=el.parentElement; if(!p||!ptr(p)) return true; }
+    return false;
+  };
+  const truthy=(v)=>v==='true';
+  const stateOf=(el)=>{
+    let checked=(el.tagName==='INPUT')?!!el.checked:false;
+    const inp=el.querySelector&&el.querySelector('input[type=checkbox],input[type=radio]');
+    if(inp&&inp.checked) checked=true;
+    if(truthy(el.getAttribute&&el.getAttribute('aria-checked'))||truthy(el.getAttribute&&el.getAttribute('aria-selected'))||truthy(el.getAttribute&&el.getAttribute('aria-pressed'))) checked=true;
+    const disabled=(el.disabled===true)||truthy(el.getAttribute&&el.getAttribute('aria-disabled'));
+    return [checked?'checked':'',disabled?'disabled':''].filter(Boolean).join(' ');
+  };
   const out=[]; let i=1;
   __baEachEl((el)=>{
+    if(out.length>=200) return;
     if(!isInteractive(el)||!__baVisible(el))return;
     const ref='e'+(i++);
     el.setAttribute('data-ba-ref',ref);
     const tag=el.tagName.toLowerCase();
     const role=el.getAttribute('role')||tag;
     const type=el.getAttribute('type')||'';
-    let name=(el.getAttribute('aria-label')||el.getAttribute('placeholder')||(el.value||'')||el.innerText||el.getAttribute('title')||el.getAttribute('name')||'').toString().trim().replace(/\\s+/g,' ').slice(0,80);
-    out.push({ref,role,tag,type,name});
+    let name=(el.getAttribute('aria-label')||el.getAttribute('placeholder')||(el.value||'')||el.innerText||el.textContent||el.getAttribute('title')||el.getAttribute('name')||'').toString().trim().replace(/\\s+/g,' ').slice(0,80);
+    out.push({ref,role,tag,type,name,state:stateOf(el)});
   });
   return {url:location.href,title:document.title,count:out.length,elements:out};
 })()`

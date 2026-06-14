@@ -28,7 +28,8 @@ export const snapshotCommand = define({
     consola.log(`# ${snap.title}\n# ${snap.url}\n# ${snap.count} interactive elements`)
     for (const el of snap.elements) {
       const label = el.type ? `${el.role}[${el.type}]` : el.role
-      consola.log(`${el.ref.padEnd(5)} ${label.padEnd(18)} ${el.name}`)
+      const st = el.state ? `[${el.state}] ` : ''
+      consola.log(`${el.ref.padEnd(5)} ${label.padEnd(18)} ${st}${el.name}`)
     }
   },
 })
