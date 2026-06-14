@@ -95,6 +95,7 @@ browser-automation bind -s bank -m nordnet    # …or adopt it into a session
 | `read (-s\|-m\|-t) [selector]` | Print page text (or a CSS selector's text) |
 | `eval (-s\|-m\|-t) <js>` | Evaluate a JS expression in the tab (escape hatch) |
 | `download (-s\|-m\|-t) (--click <ref>\|--url <href>)` | Capture a file/CSV download, wait for completion, print the path |
+| `network (-s\|-m\|-t) [--reload\|--click\|--nav] [--filter --headers --body]` | Capture network requests (find the API, headers, response bodies) |
 | `close (-s\|-m\|-t) [--tab]` | Forget the session (tab stays open); `--tab` also closes the browser tab |
 
 ## How refs work

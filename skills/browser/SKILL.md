@@ -83,6 +83,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Read page text (or a selector) | `browser-automation read -m op.fi ['.balance']` |
 | Evaluate JS in the tab (escape hatch) | `browser-automation eval -m op.fi 'document.title'` |
 | Download a file / CSV export | `browser-automation download -m bank --click e42` (or `--url <href>`) |
+| Inspect network (find the API, headers, bodies) | `browser-automation network -m bank --reload --filter api --headers --body` |
 | Forget a session (tab stays open) | `browser-automation close -s work` |
 | Forget **and** close the browser tab | `browser-automation close -s work --tab` |
 
@@ -150,6 +151,23 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
 - **`launch` is macOS/Linux only** (resolves the Chrome binary per-OS). On other
   setups, start Chrome manually with `--remote-debugging-port=9223
   --user-data-dir="<profile>"`.
+
+## Network insights — find the API behind a page
+
+`network` captures requests during a window (and an optional trigger), so you
+can discover the JSON API a dashboard calls, capture the auth headers it uses,
+and read response bodies — then scrape via that API instead of the DOM (more
+robust). Triggers: `--reload`, `--click <ref>`, `--nav <url>`, or passive.
+
+```bash
+browser-automation network -m bank --reload --filter api --headers --body
+browser-automation network -m app --click e12 --filter graphql --body
+```
+
+`--headers` surfaces `authorization` / `cookie` / `x-*` / `content-type` (e.g.
+Revolut's `x-registered-identity` / `x-device-id` for statement replay).
+**Caveat:** `--reload` on a *bank* tab can re-trigger its login challenge — for
+banks prefer a `--click` on an in-app element that fetches data, not a reload.
 
 ## Escape hatch — raw per-page CDP for pure scraping
 
