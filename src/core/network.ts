@@ -38,7 +38,11 @@ export async function captureNetwork(targetId: string, opts: CaptureOpts): Promi
   if (!wsUrl) throw new TargetGoneError(targetId)
   const s = await connect(wsUrl)
   try {
-    await s.send('Network.enable')
+    try {
+      await s.send('Network.enable', {}, 8000)
+    } catch {
+      throw new Error('Network.enable stalled — the page renderer is busy. Let the page finish loading and retry, and prefer --click over --reload on heavy SPAs.')
+    }
     const byId = new Map<string, NetEntry>()
 
     s.on('Network.requestWillBeSent', (p: any) => {
