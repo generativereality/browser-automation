@@ -1,287 +1,201 @@
 ---
 name: browser
-description: Drive a real browser from the shell via `playwright-cli` — open pages, click, type, fill forms, evaluate JS, capture snapshots, and persist auth across sessions. Use this whenever you need to interact with a web page (especially behind a login) and there's no CLI or API that already covers the task.
-allowed-tools: Bash(playwright-cli:*) Bash(npx:*) Bash(npm:*)
+description: Drive a real browser from the shell via the `browser-automation` CLI — open pages, click, type, fill forms, read text, capture snapshots, all against one shared headed Chrome with a persistent profile (cookies + extensions survive). Daemonless and per-tab isolated, so many parallel Claude Code sessions can each drive their own tab without interfering. Use whenever you need to interact with a web page (especially behind a login) and there's no CLI or API that already covers the task.
+allowed-tools: Bash(browser-automation:*) Bash(npm:*)
 ---
 
-# Browser automation via `playwright-cli`
+# Browser automation via `browser-automation`
 
-This skill drives the browser through Microsoft's official `@playwright/cli` — a plain CLI, no MCP server. Each invocation is a normal Bash call that returns a page snapshot reference on stdout.
+A plain CLI — no MCP server, **no daemon, nothing long-lived to crash**. Every
+command is a fresh process that opens a short-lived CDP connection to **one tab**,
+acts, and exits. State that must survive between calls lives in two durable
+places, neither of which is a process: the user's Chrome, and a tiny per-session
+file under `~/.browser-automation/sessions/`.
 
-**Core principle: always reuse the persistent `browser-automation` Chrome profile.** Every flow in this skill — first login, repeat run, parallel tabs — drives the same long-running Chrome at `--remote-debugging-port=9223` with `--user-data-dir=$HOME/Library/Application Support/Google/Chrome/browser-automation`. Ephemeral or in-memory profiles are off the table: they throw away cookies and force the user to re-auth on every run.
+## The model — read this first
 
-## When to reach for this
+- **One shared headed Chrome** on `--remote-debugging-port=9223` with a
+  persistent profile (`browser-automation`). Cookies, logins, and **browser
+  extensions (password managers, etc.) all persist** across runs and across
+  Claude Code restarts. The user can watch and complete interactive auth in the
+  same window.
+- **Per-target CDP, not whole-browser.** The CLI talks to a single tab's
+  `webSocketDebuggerUrl`. It never does Playwright-style "connect to the whole
+  browser and enumerate every target" — so a stuck iframe/worker or a pile of
+  open tabs can never wedge it (the failure that made `playwright-cli` time out).
+- **Address any tab on demand.** Every page command picks its tab three ways
+  (precedence `-t` > `-m` > `-s`):
+  - `-m <substr>` — any open tab whose **URL or title** contains the substring
+    (errors if ambiguous; `--first` to take the first). This is how you drive
+    tabs the user or another flow already opened — no setup needed.
+  - `-t <targetId>` — an exact tab (from `browser-automation list`).
+  - `-s <name>` — a saved **session** bookmark.
+- **Sessions are optional bookmarks, not locks.** `-s <name>` just remembers a
+  `targetId` so you don't retype a selector; there's no 1-session-1-tab rule.
+  Bind a name to an already-open tab with `bind -s name -m <substr>`. Parallel
+  Claude Code sessions stay isolated by *convention* — each drives its own tab
+  (its own `-s` name or `-m` match) — but any tab is reachable on demand.
+- **No focus stealing.** New tabs are created in the background; the CLI never
+  calls `Target.activateTarget` / `Page.bringToFront`. Your foreground app and
+  sibling sessions are left alone.
+- **Self-healing.** If the tab was closed (or Chrome restarted and reissued
+  targetIds), the next `goto` just opens a fresh background tab for that session.
+- **Refs live in the DOM.** `snapshot` stamps `data-ba-ref="e7"` onto each
+  interactive element and returns the list. A later `click e7` finds it by that
+  attribute. Because each invocation is a fresh process, **re-snapshot after any
+  action that changes the DOM** — refs from an old snapshot go stale, exactly
+  like Playwright refs.
+- **Clicks/fills are JS-dispatched** (`element.click()`, native value setter +
+  `input`/`change` events). This works on background tabs, which native CDP
+  mouse events do not reliably reach in headed Chrome. Trade-off: dispatched
+  events are not `isTrusted`, so a few hard anti-bot / payment flows may reject
+  them (see Gotchas).
 
-- You need to interact with a dashboard, form, or app that has no API or no public CLI.
-- An action is gated behind interactive login or session cookies.
-- You need to scrape behind auth, or capture a screenshot/PDF of a rendered page.
-
-If a vendor-specific CLI exists (`gh`, `stripe`, `wrangler`, `hf`, etc.), prefer that. The browser is the last resort, not the first.
-
-## One-time setup (per machine)
+## Setup (per machine)
 
 ```bash
-npm install -g @playwright/cli@latest
-playwright-cli install              # downloads ffmpeg, detects browsers
-playwright-cli install-browser      # optional: skip if Chrome is already on the system
+npm install -g @generativereality/browser-automation
+browser-automation launch     # start the canonical Chrome on :9223 (idempotent)
+browser-automation doctor     # verify Node, Chrome, targets, sessions
 ```
 
-Verify:
+`launch` is idempotent — safe to call when Chrome is already up. Override the
+profile path with `BROWSER_AUTOMATION_PROFILE=...` and the CDP host with
+`BROWSER_AUTOMATION_CDP=http://localhost:PORT` if needed.
 
-```bash
-playwright-cli --version
-```
+## Commands
 
-If `playwright-cli` isn't on PATH, fall back to `npx --no-install playwright-cli <command>`.
-
-## First-time setup per workspace: write sane defaults
-
-Before opening any browser, ensure `.playwright/cli.config.json` exists in the working directory with the recommended defaults:
-
-```json
-{
-  "outputDir": ".browser-automation",
-  "browser": {
-    "launchOptions": {
-      "headless": false
-    }
-  }
-}
-```
-
-Why these two settings:
-
-- **`outputDir: ".browser-automation"`** — snapshots, screenshots, console logs, and traces all land there instead of the default `.playwright-cli/`. Matches the gitignored convention from the previous plugin.
-- **`headless: false`** — browser opens visibly by default. Almost every real browser-automation task needs to handle interactive auth (BankID, OAuth, 2FA, CAPTCHA, etc.); a headless default just means every command needs `--headed` and the user can't see what's happening. Make it the default.
-
-Also add to `.gitignore`:
-
-```
-.browser-automation/
-.playwright/
-```
-
-The `.playwright/` daemon-state dir is created at first `open`; the config file is the only thing in there worth keeping under version control (but the daemon state inside isn't).
-
-## The full command reference is shipped with the CLI
-
-`@playwright/cli` ships its own SKILL.md with every command, every flag, and worked examples. Read it on demand instead of duplicating it here — find the exact path in the first lines of `playwright-cli --help` (the `Agent skill:` line, typically under `node_modules/@playwright/cli/node_modules/playwright-core/lib/tools/cli-client/skill/SKILL.md`).
-
-Touch points worth remembering from that file:
+Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, else
+`default`), `-m <url/title substr>`, or `-t <targetId>`.
 
 | Need | Command |
 |---|---|
-| Start a managed browser | `playwright-cli -s=<name> open [url]` — launches a new Playwright-managed Chrome |
-| Attach to an existing CDP Chrome | `playwright-cli -s=<name> attach --cdp=http://localhost:9223` |
-| Navigate inside an already-open/attached session | `playwright-cli -s=<name> goto https://example.com` |
-| Get refs for clicking | `playwright-cli snapshot` — returns `e1`, `e2`, … refs |
-| Click / type / fill | `playwright-cli click e5`, `playwright-cli fill e7 "value" --submit` |
-| Run JS in the page | `playwright-cli eval "document.title"` |
-| Save / restore auth | `playwright-cli state-save auth.json` → later: `state-load auth.json` |
-| Inspect network | `playwright-cli requests` then `request <n>` |
-| Pipe just the value | `playwright-cli --raw cookie-get session_id` |
-| Detach (keep external browser running) | `playwright-cli detach` |
-| Close | `playwright-cli close` |
+| Start/refresh the Chrome | `browser-automation launch` |
+| Diagnose setup | `browser-automation doctor` |
+| List sessions + every open tab (id, title, url) | `browser-automation list` |
+| Open a background tab | `browser-automation new -s work [url]` |
+| Navigate (session tab created if needed) | `browser-automation goto -s work https://example.com` |
+| Drive a tab the user already opened | `browser-automation snapshot -m nordnet` |
+| Adopt an open tab into a session | `browser-automation bind -s bank -m nordnet` |
+| List interactive elements (refs) | `browser-automation snapshot -m op.fi` |
+| Click by ref | `browser-automation click -m op.fi e7` |
+| Type into a field by ref | `browser-automation fill -s work e3 "value" [--submit]` |
+| Read page text (or a selector) | `browser-automation read -m op.fi ['.balance']` |
+| Evaluate JS in the tab (escape hatch) | `browser-automation eval -m op.fi 'document.title'` |
+| Download a file / CSV export | `browser-automation download -m bank --click e42` (or `--url <href>`) |
+| Forget a session (tab stays open) | `browser-automation close -s work` |
+| Forget **and** close the browser tab | `browser-automation close -s work --tab` |
 
-> **⚠️ `open` vs `goto` — the one footgun to remember.** `open` *creates a browser*; `goto` *navigates the current one*. After `attach`, **never** use `open <url>` to "go somewhere" — playwright-cli 0.1.x silently spawns a fresh headless in-memory Chrome (temp `--user-data-dir`, no cookies, attached browser sits idle, session's `attached` flag flips to `false`). That throws away the persistent `browser-automation` profile this skill is built around. Use `goto` instead. If you're unsure whether a session exists, `playwright-cli list` tells you.
-
-## Picking the right browser source
-
-**The rule:** always drive the canonical persistent `browser-automation` Chrome profile. Never fall back to an ephemeral or in-memory profile — every such fallback throws away logins, cookies, and tab state that took the user real effort to build, and the next run hits auth walls. The profile is named `browser-automation` and lives at `$HOME/Library/Application Support/Google/Chrome/browser-automation` on macOS.
-
-There are exactly two ways to drive that profile. Try them in this order:
-
-### 1. Attach to a running Chrome on port 9223 (preferred)
-
-If a long-running Chrome instance is already up with `--remote-debugging-port=9223` (the convention this plugin grew up with), attach to it. All existing logins, cookies, and tabs are reused immediately — no re-auth, no profile copy, no risk of losing state.
-
-How to know whether one is running:
+Typical loop:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:9223/json/version
-# 200 → attach. 000 or non-200 → no CDP browser available, launch one (below) or fall through to (2)/(3).
+browser-automation goto -s work https://app.example.com/login
+browser-automation snapshot -s work          # -> e1 input, e2 input, e3 button …
+browser-automation fill -s work e1 "user@example.com"
+browser-automation fill -s work e2 "secret" --submit
+browser-automation snapshot -s work          # re-snapshot: DOM changed after submit
+browser-automation read -s work '.account-balance'
 ```
 
-#### Launching the canonical Chrome on :9223 (when one isn't already running)
+## Parallel sessions — one per Claude Code tab
 
-The plugin ships `scripts/launch-chrome.sh`, which is the single source of truth for this command. It's idempotent — safe to call even when Chrome is already up — and on macOS uses the conventional profile path `$HOME/Library/Application Support/Google/Chrome/browser-automation`:
+Give each session a distinct `-s` name and they never interfere. Either pass
+`-s` every call, or set it once for the shell:
 
 ```bash
-# From the plugin checkout:
-./scripts/launch-chrome.sh
-
-# Or, equivalent one-liner if you don't have the plugin checked out:
-nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9223 \
-  --user-data-dir="$HOME/Library/Application Support/Google/Chrome/browser-automation" \
-  --no-first-run --no-default-browser-check 'about:blank' \
-  >/tmp/chrome-9223.log 2>&1 & disown
+export BAC_SESSION="$(basename "$PWD")"   # every command in this shell uses it
+browser-automation goto https://app.example.com
 ```
 
-Override the profile path via `BROWSER_AUTOMATION_PROFILE=...` if needed. The script waits up to 5s for the CDP endpoint to come up before returning.
+Each session drives its own background tab in the same Chrome. No shared
+connection, no id collisions, no active-tab fighting — that's the whole point of
+the per-target model.
 
-#### Attaching
+## Auth-persistence — log in once, reuse forever
+
+The persistent profile carries cookies and extensions, so for most sites you log
+in once (interactively, in the headed window) and every later run just works:
 
 ```bash
-playwright-cli -s=session-name attach --cdp=http://localhost:9223
+browser-automation goto -s cf https://dash.cloudflare.com
+# user completes login in the Chrome window; cookies land in the profile
+browser-automation read -s cf                 # later runs: already authenticated
 ```
 
-Then navigate **with `goto`, not `open`** (see the footgun callout in the touch-points table above):
+There's no `state-save`/`state-load` to manage — the profile *is* the auth store.
 
-```bash
-playwright-cli -s=session-name goto https://example.com
-playwright-cli -s=session-name snapshot
-```
+## Gotchas
 
-Verify the attach actually held, especially if a previous run might have left the session in a weird state:
+- **Refs go stale after any DOM change**, not just navigation. Snapshot → use
+  those refs for one action → re-snapshot. "ref not found" means re-snapshot.
+- **`isTrusted` / synthetic events.** Clicks and fills are JS-dispatched, so a
+  small number of hard anti-bot or payment widgets that demand trusted events
+  may ignore them. For those, escalate to a foregrounded native-input path
+  (future `--native` flag) or have the user do that one step manually.
+- **Cross-origin iframes are separate CDP targets.** `read`/`snapshot` see the
+  page's own document and same-origin frames, not cross-origin iframes (common
+  for SSO bank login widgets and embedded captchas). If the content you need
+  lives in a cross-origin iframe, it has its own `webSocketDebuggerUrl` — the
+  per-page CDP escape hatch below can read it directly.
+- **Downloads.** `download` arms the CDP browser download API and waits for
+  completion, then reports the saved path (default `~/.browser-automation/downloads/`).
+  Trigger it with `--click <ref>` on the export link/button, or `--url <href>`
+  for a direct CSV endpoint (e.g. OP's `a[href*=csv.do]`). **Caveat:** a button
+  whose JS handler builds a client-side **blob** and clicks it via a *nested*
+  synthetic click won't fire (Chrome activation quirk) — for those, grab the
+  underlying export URL/endpoint and use `--url`, or the site's API.
+- **Page still loading.** `goto` waits for the load event, but SPAs render after.
+  If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
+  once a known element should be present.
+- **`launch` is macOS/Linux only** (resolves the Chrome binary per-OS). On other
+  setups, start Chrome manually with `--remote-debugging-port=9223
+  --user-data-dir="<profile>"`.
 
-```bash
-playwright-cli list --json | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["browsers"][0]["attached"]))'
-# true → good. false → see "Known upstream gotchas" below.
-```
+## Escape hatch — raw per-page CDP for pure scraping
 
-When you're done, **`detach`** instead of `close` — `close` may terminate the external browser the user is sharing with you.
+When you just need to read a value out of a specific tab (no clicks), a raw
+WebSocket to that tab's `webSocketDebuggerUrl` + `Runtime.evaluate` is the most
+robust thing possible — it's exactly what this CLI does internally, and it works
+even on tabs the CLI doesn't own. `browser-automation read` covers the common
+case; drop to raw CDP only for cross-origin-iframe reads or one-off probes.
 
-```bash
-playwright-cli -s=session-name detach
-```
+## Hit a shortcoming or bug? Fix it — it's open source
 
-### 2. Launch a managed Chrome pointed at the `browser-automation` profile (fallback)
+This CLI is `@generativereality/browser-automation` (repo:
+`github.com/generativereality/browser-automation`). When you hit a missing
+capability or a bug (a site needs something the CLI can't do yet, an export
+won't trigger, a selector strategy fails), **fix it at the source rather than
+working around it forever**:
 
-Use this **only** if you can't run `scripts/launch-chrome.sh` (e.g. you're inside a sandbox that won't spawn a long-lived background process). It's strictly worse than option 1, because the Chrome dies when the session ends and other tabs can't share it. But it still drives the canonical persistent profile, so cookies and logins survive across runs:
-
-```bash
-playwright-cli -s=session-name open https://example.com \
-  --profile="$HOME/Library/Application Support/Google/Chrome/browser-automation"
-```
-
-The profile must not be in use by another Chrome process — Chrome will refuse to start with a locked profile. If it's locked, that means a real Chrome is already running on this profile; prefer option 1 and attach to that one instead.
-
-(`open` is fine here because there is no session yet — see the footgun callout for why `open` is wrong *after* a session is already attached.)
-
-### What NOT to do — never use an ephemeral or in-memory profile
-
-`playwright-cli open <url>` *without* `--profile=...` (or worse, after an `attach`, where `open` silently swaps in a temp in-memory profile — see the footgun callout) launches Chrome with a throwaway `--user-data-dir=/var/folders/.../playwright_chromiumdev_profile-XXXX`. **Don't do this for any task in this skill.** The point of the skill is to reuse cookies and logins; ephemeral profiles defeat that, and you'll waste a real human's time re-authenticating on the next run. If a snapshot/test really needs an isolated profile, use a different tool — not this skill.
-
-## The patterns that matter at parallel scale
-
-### Named sessions — one per Claude Code tab
-
-Multiple concurrent Claude Code sessions stomping on a single shared browser is a recipe for confusion. Use a named session per tab so each one has its own isolated browser + storage:
-
-```bash
-# Make sure the canonical Chrome is up, then attach.
-./scripts/launch-chrome.sh                                   # idempotent
-playwright-cli -s=tab1 attach --cdp=http://localhost:9223
-playwright-cli -s=tab1 goto https://app.example.com
-playwright-cli -s=tab1 snapshot
-playwright-cli -s=tab1 detach                                # never `close` — that would kill the shared Chrome
-```
-
-### Always open a **dedicated tab** for the task and pin to it
-
-`-s=<name>` isolates Playwright session state (cookies file, storage state, etc.), but **named sessions on the same CDP browser share the same physical Chrome tabs**. Whichever tab Chrome considers "active" is the one your `snapshot` / `click` / `fill` reads from. If anything else changes the active tab — the user clicking a tab, another Claude Code session calling `tab-select`, a chat widget auto-focusing — your next snapshot suddenly captures Blocket or Gmail and every ref you cached goes stale.
-
-The only reliable fix: at the start of every task, create a fresh tab with `tab-new <url>`, remember its index from `tab-list`, and treat it as your tab for the duration of the task.
-
-```bash
-# Start of task: open a tab dedicated to this work and pin to it.
-playwright-cli -s=cf tab-new https://dash.cloudflare.com/profile/api-tokens
-MY_TAB=$(playwright-cli -s=cf tab-list --json | python3 -c \
-  'import json,sys; ts=json.load(sys.stdin)["tabs"]; print(next(i for i,t in enumerate(ts) if t.get("current")))')
-echo "task tab = $MY_TAB"
-```
-
-Use the same `$MY_TAB` value any time you suspect another tab might have become active — e.g. after a long-running navigation, after the user pings you mid-task, or before any `snapshot`-and-act sequence where stale refs would silently target the wrong page. **Don't blindly run `tab-select $MY_TAB` before every command** (see the focus-stealing footgun in "Known upstream gotchas") — only when you have a reason to believe the active tab moved.
-
-When the task is done, `tab-close $MY_TAB` to clean up.
-
-#### Why `-s=<name>` alone isn't enough
-
-A named session in `playwright-cli` is a Node-side bookkeeping construct — it has its own auth state and its own "current page" handle. But on the wire, `attach --cdp=http://localhost:9223` connects every session to the same Chrome browser; that Chrome has exactly one set of tabs, exactly one "active" tab at a time. Two Claude Code sessions both running `-s=mine attach --cdp=...` are looking at the same tabs through different Node processes — the second one to call `tab-select` (or any action that activates a tab) wins. Sessions don't fence each other; tabs do.
-
-If you genuinely need full browser-level isolation (separate cookies, separate tab list), don't share the `:9223` Chrome — use option 2 (launch a managed Chrome on a different profile) or option 3 of the skill's fallback path. But you almost never need that; pinning to your own tab inside the shared Chrome is usually fine.
-
-Or set the session name once for the whole Claude Code session via env var so you don't have to repeat the flag:
-
-```bash
-export PLAYWRIGHT_CLI_SESSION="$(basename "$PWD")-$(date +%s)"
-playwright-cli attach --cdp=http://localhost:9223
-playwright-cli goto https://app.example.com
-# every subsequent playwright-cli call in this shell uses that session
-```
-
-List or close sessions:
-
-```bash
-playwright-cli list
-playwright-cli close-all
-playwright-cli kill-all   # last resort for stale processes
-```
-
-### Authenticated dashboards — log in once, reuse forever
-
-For sites where the same auth state will be reused across many runs (Cloudflare dashboard, Porkbun, GitHub web UI, anything without a real API):
-
-```bash
-# First time — interactive login (headed by default thanks to cli.config.json)
-./scripts/launch-chrome.sh                                   # ensure :9223 Chrome is up
-playwright-cli -s=cf attach --cdp=http://localhost:9223
-playwright-cli -s=cf goto https://dash.cloudflare.com        # navigate within the attached Chrome
-# …or, fallback only when you genuinely can't run a long-lived Chrome (sandboxed env, etc.):
-# playwright-cli -s=cf open https://dash.cloudflare.com --profile="$HOME/Library/Application Support/Google/Chrome/browser-automation"
-
-# (user completes login in the opened tab; cookies land in the persistent profile)
-playwright-cli -s=cf detach     # detach; the Chrome stays up for the next run
-
-# Later runs — the persistent profile already has the cookies; just attach and go.
-playwright-cli -s=cf attach --cdp=http://localhost:9223
-playwright-cli -s=cf goto https://dash.cloudflare.com
-```
-
-`state-save` / `state-load` exist for moving auth between machines or backing it up, but for normal day-to-day use you don't need them — the `browser-automation` profile already carries every cookie across runs.
-
-Once authenticated, pull individual cookies for downstream `curl`/`fetch` calls:
-
-```bash
-TOKEN=$(playwright-cli --raw -s=cf cookie-get __Secure-3PSID)
-curl -H "Cookie: __Secure-3PSID=$TOKEN" https://dash.cloudflare.com/api/v4/accounts
-```
-
-### Output files land in `.browser-automation/`
-
-With the recommended `cli.config.json`, snapshots and screenshots are written under `.browser-automation/` in the current working directory. For shareable outputs, pass `--filename=absolute/or/relative/path.png` explicitly.
-
-## Cleanup
-
-```bash
-playwright-cli detach         # release an attached external browser (leaves it running)
-playwright-cli close          # close a managed session
-playwright-cli close-all      # close every managed session
-playwright-cli delete-data    # delete on-disk profile for a persistent session
-```
-
-There's no daemon to babysit between runs — the browser process is tied to the session and exits on `close`.
-
-## Known upstream gotchas (`@playwright/cli` 0.1.x)
-
-These are quirks of the upstream CLI, not bugs in this plugin. The plugin's job is to keep you from tripping on them.
-
-- **`open` after `attach` silently replaces the session with a new headless in-memory Chrome.** If you `attach --cdp=...` and then run `open <url>`, the CLI spawns a fresh Playwright-managed Chrome with a temp `--user-data-dir` (`/var/folders/.../playwright_chromiumdev_profile-XXXX`), navigates *that* one, and flips your session's `attached` flag to `false`. Your originally-attached Chrome sits idle, cookies-less navigation hits auth walls, and `playwright-cli list` will show the session as no longer attached even though `attach` reported success seconds earlier. **Workaround:** after `attach`, only use `goto` to navigate. Reserve `open` for *creating* a brand-new managed session when nothing is attached.
-- **`detach` errors with "session not attached" after the `open`-after-`attach` slip.** Once `open` has replaced an attached session with a managed in-memory one, the only cleanup is `playwright-cli -s=<name> close` (or `playwright-cli close-all`). The error message already points to `close`, so follow it.
-- **Recovering a wedged session.** If `list` shows a session in a state you don't recognise — `attached: false` after a fresh attach, in-memory data dir, etc. — run `playwright-cli close-all` (or `playwright-cli -s=<name> close`) and re-attach from scratch. Persistent profile state on disk survives.
-- **`tab-select` and `osascript activate "Google Chrome"` raise Chrome to the foreground on macOS — every call.** Calling either one in a tight loop (e.g. before every `snapshot`) yanks focus away from the user's frontmost app on every turn. Even worse: if the user clicks back to their previous app, your next `tab-select` snatches focus again 200ms later. **Workaround:** only call `tab-select` when you have evidence the active tab actually moved off your pinned tab (e.g. a previous `snapshot` returned content from the wrong URL). Don't preemptively re-select before every command, and never call `osascript activate "Google Chrome"` — your tab is already the right target inside CDP.
-- **Element refs (`e1`, `e2`, …) go stale after every action, not just every navigation.** `playwright-cli` re-generates the ref table on every `snapshot`; a `click` that re-renders even a small part of the page (e.g. a dropdown expanding) shifts every subsequent ref's numbering. **Workaround:** snapshot → use the refs from THAT snapshot → re-snapshot before reusing refs. Treat refs as good for exactly one action. If you cache a ref string in a shell variable and try to use it two operations later, expect "Ref eN not found in the current page snapshot".
-- **Multi-step forms across page transitions.** Cloudflare-style flows where each "Continue" navigates to a new page reset the entire ref table, often with no visible URL change. Always re-snapshot after any button click that's intended to advance a wizard step, and never assume refs survive a navigation.
-- **`tab-list` indices are not stable across `tab-close` calls.** When another session (or the user) closes a tab to your left, your tab's index decreases by one. If you cached `MY_TAB=5` and tab 2 gets closed, your task tab is now index 4. Either re-resolve from `tab-list --json` by matching on URL/title before each `tab-select`, or accept that long-lived tasks should periodically refresh the index.
+1. **Clone** next to your work: `gh repo clone generativereality/browser-automation`
+   (or `git clone https://github.com/generativereality/browser-automation`).
+2. **Fix** in `src/` — TypeScript. Commands live in `src/commands/<name>.ts`,
+   the daemonless CDP core in `src/core/` (`cdp.ts` connection/eval/navigate,
+   `dom.ts` injected snapshot/click/read JS, `download.ts`, `resolve.ts` tab
+   selection). Add a command by creating `src/commands/x.ts` and registering it
+   in `src/commands/index.ts`.
+3. **Validate locally** against the running Chrome:
+   `npm install && npm run typecheck && npm run build`, then `npm link` (so the
+   global `browser-automation` points at your build) — or run `node dist/index.js …`.
+   Reproduce the failure, confirm the fix, and re-test on a scratch tab you
+   created (read-only-safe; never disrupt the user's live tabs).
+4. **Propose a PR** for the user to review and contribute upstream — don't
+   publish yourself (the maintainer cuts releases):
+   ```bash
+   git checkout -b fix/<short-desc>
+   git commit -am "fix: <what and why>"
+   gh pr create --fill --repo generativereality/browser-automation
+   ```
+   Then tell the user the branch/PR link and what it changes, and ask them to
+   review and merge. After it's released, `npm install -g @generativereality/browser-automation@latest`.
 
 ## Troubleshooting
 
-- **`playwright-cli: command not found`** — install missed PATH; fall back to `npx --no-install playwright-cli` or re-run `npm install -g @playwright/cli@latest`.
-- **`browser not installed`** — run `playwright-cli install-browser`.
-- **No Chrome on :9223 to attach to** — run `./scripts/launch-chrome.sh` from the plugin checkout, or the equivalent one-liner from the "Launching the canonical Chrome on :9223" section above.
-- **`Browser is already in use`** when launching with `--profile=...` — a real Chrome is already running on the `browser-automation` profile. That's the canonical state; don't quit it. Attach via CDP instead: `playwright-cli -s=<name> attach --cdp=http://localhost:9223`. Never pass `--isolated` here — it abandons the persistent profile this skill is built around.
-- **Session unexpectedly headless / no cookies after `attach`** — you almost certainly ran `open <url>` instead of `goto <url>` after attaching. See "Known upstream gotchas" above.
-- **CAPTCHA / bot challenges** — expected on heavily-protected sites; re-run after pausing, or fall back to a vendor API/CLI if one exists.
-- **Stale session** — `playwright-cli kill-all` then re-open. Persistent profile state on disk survives.
-- **Snapshot looks empty after navigation** — the page is still loading. Re-run `snapshot` after a short wait or after a known element appears (`playwright-cli eval "document.readyState"`).
+- **`No CDP browser on http://localhost:9223`** → `browser-automation launch`.
+- **`command not found: browser-automation`** → `npm install -g @generativereality/browser-automation`.
+- **Chrome was restarted** → nothing to do; the next `goto` recreates the
+  session's tab automatically (sessions self-heal; `list` shows `stale`).
+- **A login wall on a repeat run** → the profile lost cookies (rare) or the site
+  logged you out; just log in again in the headed window.
+- **CAPTCHA / bot challenge** → expected on heavily-protected sites; pause for the
+  user, or fall back to a vendor API/CLI if one exists.

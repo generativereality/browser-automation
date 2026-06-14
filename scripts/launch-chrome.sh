@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch the canonical long-running Chrome that playwright-cli attaches to via CDP.
+# Launch the canonical long-running headed Chrome that the browser-automation CLI drives via per-target CDP.
 #
 # Usage:
 #   ./scripts/launch-chrome.sh          # launch if not already running
@@ -9,8 +9,7 @@
 #   The `browser-automation` skill prefers to drive a real, persistent Chrome
 #   profile (so logins survive reboots) over a Playwright-managed one. The
 #   convention is: one Chrome listening on --remote-debugging-port=9223 with
-#   a dedicated user-data-dir. `playwright-cli attach --cdp=http://localhost:9223`
-#   then connects to it. This script is the single source of truth for how
+#   a dedicated user-data-dir. The browser-automation CLI then drives it over per-target CDP. This script is the single source of truth for how
 #   to start that Chrome.
 set -euo pipefail
 
@@ -33,7 +32,7 @@ fi
 
 if is_up; then
   echo "Already running on :${PORT} — nothing to do."
-  echo "Attach with: playwright-cli -s=<session> attach --cdp=http://localhost:${PORT}"
+  echo "Drive it with: browser-automation goto -s <session> <url>"
   exit 0
 fi
 
@@ -70,7 +69,7 @@ disown
 for _ in $(seq 1 20); do
   if is_up; then
     echo "Chrome launched on :${PORT} (profile: ${PROFILE}, log: ${LOG})"
-    echo "Attach with: playwright-cli -s=<session> attach --cdp=http://localhost:${PORT}"
+    echo "Drive it with: browser-automation goto -s <session> <url>"
     exit 0
   fi
   sleep 0.25

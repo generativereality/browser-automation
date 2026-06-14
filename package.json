@@ -1,0 +1,56 @@
+{
+  "name": "@generativereality/browser-automation",
+  "version": "0.3.0",
+  "description": "Daemonless, per-tab-isolated browser automation CLI for Claude Code. Drives one shared headed Chrome (persistent profile + extensions) over per-target CDP — many parallel sessions, no focus stealing, nothing long-lived to crash.",
+  "type": "module",
+  "bin": {
+    "browser-automation": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    ".claude-plugin",
+    "skills",
+    "scripts"
+  ],
+  "scripts": {
+    "dev": "bun run ./src/index.ts",
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run build",
+    "release": "bumpp && npm publish",
+    "sync-plugin": "bash scripts/sync-plugin.sh",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "claude-code",
+    "browser-automation",
+    "cdp",
+    "chrome-devtools-protocol",
+    "playwright-alternative",
+    "ai-agents"
+  ],
+  "author": "motin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/generativereality/browser-automation.git"
+  },
+  "homepage": "https://github.com/generativereality/browser-automation",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "dependencies": {
+    "consola": "^3.4.0",
+    "gunshi": "^0.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "bumpp": "^9.11.1",
+    "tsdown": "^0.12.0",
+    "typescript": "^5.8.0"
+  }
+}
