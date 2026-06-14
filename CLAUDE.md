@@ -25,10 +25,11 @@ gap-fills are patches: 0.4.1, 0.4.2, …)
 Default loop while iterating:
 
 1. Make the change in `src/`.
-2. `npm run typecheck && npm run build` and validate against the running Chrome
-   (`npm link` once so the global `browser-automation` points at your build, or
-   run `node dist/index.js …`). Test on a scratch tab you created — never disrupt
-   the user's live tabs.
+2. `npm run typecheck && npm run build`, then validate against the running Chrome
+   by running **`node dist/index.js …`** from the repo. **Do NOT `npm link`** — it
+   hijacks the machine-global `browser-automation` bin, so parallel sessions (and
+   the user's main session) would run your WIP clone instead of the release. Test
+   on a scratch tab you created — never disrupt the user's live tabs.
 3. `git commit` locally.
 4. **Tell the user what's staged & unpublished. Wait for an explicit "publish".**
 

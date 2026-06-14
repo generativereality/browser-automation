@@ -232,10 +232,14 @@ working around it forever**:
    selection). Add a command by creating `src/commands/x.ts` and registering it
    in `src/commands/index.ts`.
 3. **Validate locally** against the running Chrome:
-   `npm install && npm run typecheck && npm run build`, then `npm link` (so the
-   global `browser-automation` points at your build) — or run `node dist/index.js …`.
-   Reproduce the failure, confirm the fix, and re-test on a scratch tab you
-   created (read-only-safe; never disrupt the user's live tabs).
+   `npm install && npm run typecheck && npm run build`, then run your build as
+   **`node dist/index.js <cmd>`** from the clone. **Do NOT `npm link`** — it
+   repoints the machine-global `browser-automation` bin, so a parallel Claude
+   Code session (or the user's main session) would suddenly be running *your*
+   work-in-progress clone instead of the installed release. Validate via the
+   explicit `node dist/index.js` path instead. Reproduce the failure, confirm
+   the fix, and re-test on a scratch tab you created (read-only-safe; never
+   disrupt the user's live tabs).
 4. **Propose a PR** for the user to review and contribute upstream — don't
    publish yourself (the maintainer cuts releases):
    ```bash
