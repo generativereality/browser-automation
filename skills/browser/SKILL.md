@@ -132,8 +132,46 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   those refs for one action → re-snapshot. "ref not found" means re-snapshot.
 - **`isTrusted` / synthetic events.** Clicks and fills are JS-dispatched, so a
   small number of hard anti-bot or payment widgets that demand trusted events
-  may ignore them. For those, escalate to a foregrounded native-input path
-  (future `--native` flag) or have the user do that one step manually.
+  may ignore them. For fills, pass `--native` to drive character insertion
+  through CDP `Input.insertText` instead — that fires real (trusted)
+  `beforeinput`/`input` events. For clicks, escalate to a foregrounded
+  native-input path or have the user do that one step manually.
+- **Controlled-form state stickiness.** Form libraries that subscribe to React's
+  internal value-setter (React Hook Form, Final Form, Formik with a `Controller`,
+  Blocket/finn.no's `recommerce` editor) sometimes ignore the synthetic `input`
+  event the default `fill` dispatches: the DOM input shows the new value, but
+  the form's React state stays on the old one — and the next submit serializes
+  the *old* value. Two ways out:
+  1. **`fill --native --verify <ref> <value>`** — drives character insertion
+     through CDP `Input.insertText` (trusted events). `--verify` re-reads the
+     field afterwards and warns if either the DOM value diverged from what you
+     asked for, or if React's internal `_valueTracker` still holds the old
+     value (the canonical state-stickiness signature). Use this first; it
+     solves the vast majority of cases.
+  2. **API bypass** — when even `--native` doesn't stick (e.g. the form library
+     binds to an external state machine that drives its own POST/PUT), grab the
+     form's underlying endpoint and hit it directly:
+     ```bash
+     # Hook fetch and persist a real form-submit's body + headers via localStorage
+     # (it survives the post-submit navigation, unlike window.* globals):
+     browser-automation eval -s app "(function(){var f=window.fetch;window.fetch=function(u,o){if(o&&o.method==='PUT'&&u.toString().includes('/api/item/')){localStorage.setItem('__lastPut',o.body||'');localStorage.setItem('__lastHdrs',JSON.stringify(o.headers||{}));}return f.apply(this,arguments);};})()"
+     # …then click Save once in the form so the hook captures the canonical PUT…
+     browser-automation eval -s app "({body:localStorage.getItem('__lastPut'),headers:localStorage.getItem('__lastHdrs')})"
+     # …gives you the endpoint, exact body shape, and custom headers
+     # (e.g. Blocket uses E-Tag, not the standard If-Match — and the etag lives
+     # in the JSON body, not the HTTP header).
+     ```
+     Then re-fetch the GET endpoint for current data + the current etag, PUT
+     directly with the modified field(s) and the captured custom header, and
+     **drive the form's terminal commit step through the UI** — many two-step
+     editors (`edit → delivery → publish`) only persist `state: "edit"`
+     server-side until that final Save fires the commit.
+
+  Blocket's recommerce price field is the canonical case: default `fill e43 "500"`
+  shows 500 in the input but submits 750. Fix: `fill --native --verify e43 "500"`
+  (or, if --native doesn't stick: direct PUT to
+  `/recommerce/create/api/item/<id>` with `E-Tag: <body.etag>`, then click
+  Save on the delivery page to commit).
 - **Cross-origin iframes are separate CDP targets.** `read`/`snapshot` see the
   page's own document and same-origin frames, not cross-origin iframes (common
   for SSO bank login widgets and embedded captchas). If the content you need
