@@ -133,7 +133,12 @@ same one-action-per-snapshot rule as Playwright refs.
   that only exists during the chooser (App Store Connect's "Attach File", many
   React dropzones) — use `upload --click <ref> <path…>`: it intercepts the chooser
   and sets files on whatever input Chrome opens. Setting the static input via JS
-  won't work there; the button uses its own throwaway input.
+  won't work there; the button uses its own throwaway input. `upload` judges
+  success by the `change` event (reports "delivered"), since apps reset the input
+  to 0 after consuming the file — so `files=0` afterward is normal. **Verify by
+  re-snapshot/screenshot and don't blindly retry:** the file may stage as a row in
+  an attachment *list* (not a single chip), and each successful run adds another
+  attachment, so retrying can silently create duplicates.
 - `launch` resolves Chrome on macOS/Linux; elsewhere start Chrome manually with
   `--remote-debugging-port=9223 --user-data-dir="<profile>"`.
 

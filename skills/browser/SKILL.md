@@ -198,6 +198,15 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   clicks the trigger, waits for `Page.fileChooserOpened`, and sets files on the
   `backendNodeId` Chrome reports. Paths are resolved from cwd; pass absolute paths
   to be safe. Multiple paths upload as a multi-file selection.
+  **Verify by re-snapshot/screenshot, and DON'T blindly retry.** Apps reset the
+  input to 0 right after consuming the file, so `upload` judges success by the
+  `change` event (it reports "delivered"), not by residual `input.files` — a
+  successful upload legitimately leaves `files=0`. The staged file often shows up
+  as a row in an attachment *list* (e.g. ASC's "Message Attachments"), not a single
+  chip, so confirm with `snapshot`/`screenshot` rather than assuming. Each
+  successful run **adds another attachment** — retrying a "did it work?" upload a
+  few times silently produces duplicates (this cost us a dozen copies on a live ASC
+  reply). Upload once, verify, and only re-run if verification shows nothing staged.
 - **Page still loading.** `goto` waits for the load event, but SPAs render after.
   If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
   once a known element should be present.
