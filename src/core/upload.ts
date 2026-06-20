@@ -16,6 +16,17 @@
 //    fires `Page.fileChooserOpened` we get the backendNodeId of whichever input it
 //    actually opened and set files on THAT. Playwright's `fileChooser` /
 //    `setInputFiles`, same mechanism.
+//
+//    The hard case (ASC in the wild): the transient input is created and `.click()`d
+//    but NEVER appended to the document, and the page reads it through a *delegated*
+//    change listener (React's synthetic events, or a container-level handler) rather
+//    than one bound to the node itself. `DOM.setFileInputFiles` does set `.files` and
+//    fire a `change`, but on a detached node that `change` has no document ancestors
+//    to bubble through, so the delegated handler never runs — the upload silently
+//    no-ops (reports success, nothing stages). A node with its OWN listener works
+//    detached; a delegated one does not. So after setting files we VERIFY the node,
+//    and if it's detached we re-attach it (hidden) and re-dispatch bubbling
+//    input/change so delegation fires — then report what actually staged.
 
 import { withPage } from './cdp.js'
 import { clickExpr, findRefExpr } from './dom.js'
@@ -29,6 +40,12 @@ export interface SetFilesResult {
 export interface UploadResult {
   backendNodeId: number
   files: string[]
+  /** Files actually present on the node after the operation (0 = nothing staged). */
+  count: number
+  /** Was the node connected to the document when we set files? */
+  connected: boolean
+  /** Did we have to re-attach a detached transient input + re-dispatch events? */
+  reconnected: boolean
 }
 
 /** Set files on a known input[type=file] addressed by ref. */
@@ -108,8 +125,47 @@ export async function uploadViaChooser(
       if (clickVal && clickVal.err) throw new Error(clickVal.err)
 
       const backendNodeId = await opened
+      // Set files ASAP (minimize any window where the page tears the node down).
       await s.send('DOM.setFileInputFiles', { backendNodeId, files })
-      return { backendNodeId, files }
+
+      // Resolve to a live JS handle so we can verify staging and, if the input is
+      // a detached transient, re-attach + re-dispatch so a delegated/React change
+      // handler actually fires. setFileInputFiles already fires `change`, which is
+      // enough for a node-bound listener or a connected node; this is the fallback
+      // for the detached-delegated case that otherwise silently no-ops.
+      let count = files.length
+      let connected = true
+      let reconnected = false
+      try {
+        const r = await s.send('DOM.resolveNode', { backendNodeId })
+        const objectId: string | undefined = r.object?.objectId
+        if (objectId) {
+          const v = await s.send('Runtime.callFunctionOn', {
+            objectId,
+            returnByValue: true,
+            functionDeclaration: `function(){
+              var el=this;
+              var was=el.isConnected;
+              var reattached=false;
+              if(!el.isConnected){
+                try{ el.style.display='none'; (document.body||document.documentElement).appendChild(el); reattached=true; }catch(e){}
+              }
+              if(reattached){
+                // The node was off-document, so the change setFileInputFiles fired
+                // never reached a delegated handler. Now that it's on the tree,
+                // re-fire bubbling input+change so delegation/React onChange runs.
+                try{ el.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){}
+                try{ el.dispatchEvent(new Event('change',{bubbles:true})); }catch(e){}
+              }
+              return { connected: was, count: (el.files?el.files.length:0), reconnected: reattached };
+            }`,
+          })
+          const val = v.result?.value
+          if (val) { count = val.count; connected = val.connected; reconnected = val.reconnected }
+        }
+      } catch { /* verification is best-effort; fall through with optimistic defaults */ }
+
+      return { backendNodeId, files, count, connected, reconnected }
     } finally {
       try { await s.send('Page.setInterceptFileChooserDialog', { enabled: false }) } catch { /* ignore */ }
     }

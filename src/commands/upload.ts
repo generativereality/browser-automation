@@ -38,7 +38,23 @@ export const uploadCommand = define({
     const files = absFiles(paths)
     const targetId = await resolveExistingTargetId(targetOpts(ctx.values))
     const r = await uploadViaChooser(targetId, click, files, (ctx.values.timeout as number | undefined) ?? 15000)
-    consola.success(`uploaded ${r.files.length} file(s) via chooser (backendNodeId ${r.backendNodeId}):`)
+
+    if (r.count === 0) {
+      // setFileInputFiles ran but the node holds no files — the page tore the
+      // transient input down before we could set it. Don't claim success.
+      consola.error(
+        `the file chooser opened (backendNodeId ${r.backendNodeId}) but no file is staged on its input — ` +
+          `the page likely replaced/destroyed the transient input before it could be set. ` +
+          `Re-snapshot and confirm --click points at the real trigger, or try again.`,
+      )
+      process.exit(1)
+    }
+
+    const note = r.reconnected
+      ? ' (input was detached — re-attached and re-dispatched input/change so the page\'s handler fired)'
+      : ''
+    consola.success(`uploaded ${r.count} file(s) via chooser (backendNodeId ${r.backendNodeId})${note}:`)
     for (const f of r.files) process.stdout.write(f + '\n')
+    consola.info('Re-snapshot to confirm the attachment chip/preview appeared before submitting — the DOM changed.')
   },
 })
