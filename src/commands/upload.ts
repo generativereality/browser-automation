@@ -39,11 +39,11 @@ export const uploadCommand = define({
     const targetId = await resolveExistingTargetId(targetOpts(ctx.values))
     const r = await uploadViaChooser(targetId, click, files, (ctx.values.timeout as number | undefined) ?? 15000)
 
-    if (r.count === 0) {
-      // setFileInputFiles ran but the node holds no files — the page tore the
-      // transient input down before we could set it. Don't claim success.
+    if (r.delivered === 0) {
+      // The change event fired but the input held no files when it did — the page
+      // tore the transient input down before we could set it. Real failure.
       consola.error(
-        `the file chooser opened (backendNodeId ${r.backendNodeId}) but no file is staged on its input — ` +
+        `the file chooser opened (backendNodeId ${r.backendNodeId}) but the file never reached the page's change handler — ` +
           `the page likely replaced/destroyed the transient input before it could be set. ` +
           `Re-snapshot and confirm --click points at the real trigger, or try again.`,
       )
@@ -53,8 +53,17 @@ export const uploadCommand = define({
     const note = r.reconnected
       ? ' (input was detached — re-attached and re-dispatched input/change so the page\'s handler fired)'
       : ''
-    consola.success(`uploaded ${r.count} file(s) via chooser (backendNodeId ${r.backendNodeId})${note}:`)
+    consola.success(`delivered ${r.files.length} file(s) to the page's file handler via chooser (backendNodeId ${r.backendNodeId})${note}:`)
     for (const f of r.files) process.stdout.write(f + '\n')
-    consola.info('Re-snapshot to confirm the attachment chip/preview appeared before submitting — the DOM changed.')
+    if (r.count === 0) {
+      // Delivered, but the input was reset to 0 — normal for apps that consume the
+      // file then clear the input. We can't prove the app *staged* it from here.
+      consola.info(
+        'The app consumed the file and reset the input (normal). This confirms delivery, not staging — ' +
+          're-snapshot or screenshot to verify the attachment chip/preview actually appeared before submitting.',
+      )
+    } else {
+      consola.info('Re-snapshot to confirm the attachment chip/preview appeared before submitting — the DOM changed.')
+    }
   },
 })

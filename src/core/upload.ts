@@ -40,8 +40,15 @@ export interface SetFilesResult {
 export interface UploadResult {
   backendNodeId: number
   files: string[]
-  /** Files actually present on the node after the operation (0 = nothing staged). */
+  /** Files present on the node AFTER the operation. Often 0 even on success:
+   *  many uploaders (App Store Connect included) reset the input to "" once their
+   *  change handler has consumed the file, so use `delivered`, not this, to judge
+   *  success. */
   count: number
+  /** Files the input held when the `change` event actually fired — i.e. what the
+   *  page's handler saw. >=1 means the file was delivered to the handler, even if
+   *  the input was reset to 0 afterward. This is the real success signal. */
+  delivered: number
   /** Was the node connected to the document when we set files? */
   connected: boolean
   /** Did we have to re-attach a detached transient input + re-dispatch events? */
@@ -125,47 +132,74 @@ export async function uploadViaChooser(
       if (clickVal && clickVal.err) throw new Error(clickVal.err)
 
       const backendNodeId = await opened
-      // Set files ASAP (minimize any window where the page tears the node down).
-      await s.send('DOM.setFileInputFiles', { backendNodeId, files })
 
-      // Resolve to a live JS handle so we can verify staging and, if the input is
-      // a detached transient, re-attach + re-dispatch so a delegated/React change
-      // handler actually fires. setFileInputFiles already fires `change`, which is
-      // enough for a node-bound listener or a connected node; this is the fallback
-      // for the detached-delegated case that otherwise silently no-ops.
-      let count = files.length
+      // Resolve to a live JS handle BEFORE setting files, so we can (a) install a
+      // one-shot `change` probe that records what the page's handler actually sees
+      // — the real success signal, since apps reset the input to 0 right after
+      // consuming it — and (b) re-attach the node if it's a detached transient
+      // (the delegated-handler case that otherwise silently no-ops).
       let connected = true
       let reconnected = false
+      let objectId: string | undefined
       try {
         const r = await s.send('DOM.resolveNode', { backendNodeId })
-        const objectId: string | undefined = r.object?.objectId
-        if (objectId) {
-          const v = await s.send('Runtime.callFunctionOn', {
+        objectId = r.object?.objectId
+      } catch { /* fall back to backendNodeId-only set below */ }
+
+      if (objectId) {
+        const pre = await s.send('Runtime.callFunctionOn', {
+          objectId,
+          returnByValue: true,
+          functionDeclaration: `function(){
+            var el=this;
+            var was=el.isConnected;
+            var reattached=false;
+            if(!el.isConnected){
+              try{ el.style.display='none'; (document.body||document.documentElement).appendChild(el); reattached=true; }catch(e){}
+            }
+            // Record the file count at change-dispatch time — survives the app
+            // resetting el.files to 0 immediately after its handler runs.
+            el.__baDelivered = -1;
+            el.addEventListener('change', function(e){ try{ el.__baDelivered = el.files ? el.files.length : 0; }catch(_){ el.__baDelivered = 0; } }, { once: true });
+            return { connected: was, reconnected: reattached };
+          }`,
+        })
+        const pv = pre.result?.value
+        if (pv) { connected = pv.connected; reconnected = pv.reconnected }
+      }
+
+      // Set files (prefer objectId so it tracks a re-attached node; else backendNodeId).
+      await s.send('DOM.setFileInputFiles', objectId ? { objectId, files } : { backendNodeId, files })
+
+      let count = files.length
+      let delivered = files.length
+      if (objectId) {
+        try {
+          const post = await s.send('Runtime.callFunctionOn', {
             objectId,
             returnByValue: true,
             functionDeclaration: `function(){
               var el=this;
-              var was=el.isConnected;
-              var reattached=false;
-              if(!el.isConnected){
-                try{ el.style.display='none'; (document.body||document.documentElement).appendChild(el); reattached=true; }catch(e){}
-              }
-              if(reattached){
-                // The node was off-document, so the change setFileInputFiles fired
-                // never reached a delegated handler. Now that it's on the tree,
-                // re-fire bubbling input+change so delegation/React onChange runs.
+              // If the node was detached, the change from setFileInputFiles couldn't
+              // reach a delegated handler — re-fire bubbling input+change now that
+              // it's on the tree.
+              if(${reconnected ? 'true' : 'false'}){
                 try{ el.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){}
                 try{ el.dispatchEvent(new Event('change',{bubbles:true})); }catch(e){}
               }
-              return { connected: was, count: (el.files?el.files.length:0), reconnected: reattached };
+              return { count: (el.files?el.files.length:0), delivered: (typeof el.__baDelivered==='number'?el.__baDelivered:-1) };
             }`,
           })
-          const val = v.result?.value
-          if (val) { count = val.count; connected = val.connected; reconnected = val.reconnected }
-        }
-      } catch { /* verification is best-effort; fall through with optimistic defaults */ }
+          const val = post.result?.value
+          if (val) {
+            count = val.count
+            // delivered === -1 means our change listener never fired at all.
+            delivered = val.delivered >= 0 ? val.delivered : 0
+          }
+        } catch { /* best-effort; keep optimistic defaults */ }
+      }
 
-      return { backendNodeId, files, count, connected, reconnected }
+      return { backendNodeId, files, count, delivered, connected, reconnected }
     } finally {
       try { await s.send('Page.setInterceptFileChooserDialog', { enabled: false }) } catch { /* ignore */ }
     }
