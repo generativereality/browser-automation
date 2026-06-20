@@ -83,6 +83,8 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Read page text (or a selector) | `browser-automation read -m op.fi ['.balance']` |
 | Evaluate JS in the tab (escape hatch) | `browser-automation eval -m op.fi 'document.title'` |
 | Download a file / CSV export | `browser-automation download -m bank --click e42` (or `--url <href>`) |
+| Set files on a known `<input type=file>` | `browser-automation setfiles -m app e7 ~/Desktop/clip.mp4` |
+| Upload via a button that opens a file chooser | `browser-automation upload -m app --click e9 ~/Desktop/clip.mp4` |
 | Inspect network (find the API, headers, bodies) | `browser-automation network -m bank --reload --filter api --headers --body` |
 | Screenshot a tab | `browser-automation screenshot -m op.fi --full -o shot.png` |
 | Forget a session (tab stays open) | `browser-automation close -s work` |
@@ -184,6 +186,18 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   whose JS handler builds a client-side **blob** and clicks it via a *nested*
   synthetic click won't fire (Chrome activation quirk) — for those, grab the
   underlying export URL/endpoint and use `--url`, or the site's API.
+- **File upload.** Two paths, mirroring Playwright. For a static, snapshot-able
+  `<input type=file>`, use `setfiles <ref> <path…>` — it resolves the ref and
+  calls `DOM.setFileInputFiles` (a file input's `.files` is read-only to page JS,
+  so a value-setter/`eval` can't populate it; CDP can, and fires trusted
+  `input`/`change`). For a **custom "attach" button** that opens a native file
+  chooser and reads a *transient* `<input type=file>` it creates+clicks on the fly
+  (App Store Connect's "Attach File", many React dropzones), `setfiles` on the
+  static input is useless — the handler uses its own throwaway input. Use
+  `upload --click <ref> <path…>`: it arms `Page.setInterceptFileChooserDialog`,
+  clicks the trigger, waits for `Page.fileChooserOpened`, and sets files on the
+  `backendNodeId` Chrome reports. Paths are resolved from cwd; pass absolute paths
+  to be safe. Multiple paths upload as a multi-file selection.
 - **Page still loading.** `goto` waits for the load event, but SPAs render after.
   If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
   once a known element should be present.

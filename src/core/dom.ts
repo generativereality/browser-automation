@@ -238,6 +238,16 @@ export function readValueAndTrackerExpr(ref: string): string {
   })()`
 }
 
+/** Return the live element for a ref as an OBJECT (evaluate with
+ *  returnByValue:false) so the caller gets a Runtime RemoteObject `objectId`,
+ *  which `DOM.setFileInputFiles` accepts directly. Resolves through shadow DOM
+ *  and same-origin iframes like every other ref op. Yields `null` (subtype
+ *  'null', no objectId) when the ref is stale. */
+export function findRefExpr(ref: string): string {
+  const r = JSON.stringify(ref)
+  return WALK + `(() => __baFind(${r}))()`
+}
+
 export function readExpr(selector?: string): string {
   const root = selector ? `__baQuery(${JSON.stringify(selector)})` : `document.body`
   const notFound = selector ? `'(no element matches ' + ${JSON.stringify(selector)} + ')'` : `''`
