@@ -124,6 +124,41 @@ export function rectExpr(ref: string): string {
   })()`
 }
 
+// Actionability probe for `click --trusted` — one snapshot of whether the
+// element is ready to receive a real mouse click *right now*. Scrolls into view,
+// then returns its current click-point (viewport-center, clamped into the
+// viewport) together with `hit`: does that point hit-test to the element (or a
+// descendant)? i.e. is the element the topmost, unoccluded target there.
+//
+// WHY this exists: dispatching CDP mouse events at coordinates resolved ONCE,
+// immediately, is the documented failure of the old trusted path — for menus /
+// popovers / dropdowns that ANIMATE in (LinkedIn's artdeco dropdown, Radix
+// content), the press lands on stale coordinates (the item is still sliding) or
+// on an overlay still covering it, so the item only *highlights* (the hover from
+// mouseMoved) without its click handler ever firing. The caller polls this until
+// the point is BOTH hittable and stable across two samples — Playwright's
+// actionability model — then dispatches at the settled point. The hit-test
+// pierces the element's own shadow root and tolerates a shadow-host topmost.
+export function actionabilityExpr(ref: string): string {
+  const r = JSON.stringify(ref)
+  return WALK + `(() => {
+    const el=__baFind(${r});
+    if(!el)return {err:'ref not found: '+${r}+' (re-run snapshot)'};
+    el.scrollIntoView({block:'center',inline:'center'});
+    const b=el.getBoundingClientRect();
+    if(b.width===0&&b.height===0)return {err:'ref '+${r}+' has zero size / not visible'};
+    const vw=innerWidth,vh=innerHeight;
+    const x=Math.min(Math.max(b.left+b.width/2,1),vw-1);
+    const y=Math.min(Math.max(b.top+b.height/2,1),vh-1);
+    const root=el.getRootNode();
+    let top=(root&&root.elementFromPoint?root:document).elementFromPoint(x,y);
+    // descend through any shadow root under the point to find the deepest target
+    while(top&&top.shadowRoot){const inner=top.shadowRoot.elementFromPoint(x,y);if(!inner||inner===top)break;top=inner;}
+    const hit=!!top&&(top===el||el.contains(top)||(top.contains&&top.contains(el)));
+    return {ok:true,tag:el.tagName.toLowerCase(),x,y,hit};
+  })()`
+}
+
 export function fillExpr(ref: string, value: string, submit: boolean): string {
   const r = JSON.stringify(ref)
   const v = JSON.stringify(value)
