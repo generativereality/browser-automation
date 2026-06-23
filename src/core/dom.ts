@@ -107,23 +107,6 @@ export function clickExpr(ref: string): string {
   })()`
 }
 
-// Resolve a ref to its on-screen center coordinates (CSS pixels, viewport-
-// relative). Used by `click --trusted` to dispatch real CDP mouse events at
-// the element — the only thing that satisfies widgets demanding `isTrusted`
-// events (Radix dropdown/popover triggers, cmdk comboboxes), which the
-// JS-dispatched `el.click()` above silently no-ops.
-export function rectExpr(ref: string): string {
-  const r = JSON.stringify(ref)
-  return WALK + `(() => {
-    const el=__baFind(${r});
-    if(!el)return {err:'ref not found: '+${r}+' (re-run snapshot)'};
-    el.scrollIntoView({block:'center',inline:'center'});
-    const b=el.getBoundingClientRect();
-    if(b.width===0&&b.height===0)return {err:'ref '+${r}+' has zero size / not visible'};
-    return {ok:true,tag:el.tagName.toLowerCase(),x:b.left+b.width/2,y:b.top+b.height/2};
-  })()`
-}
-
 // Actionability probe for `click --trusted` — one snapshot of whether the
 // element is ready to receive a real mouse click *right now*. Scrolls into view,
 // then returns its current click-point (viewport-center, clamped into the
