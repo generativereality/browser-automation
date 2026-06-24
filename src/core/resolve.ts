@@ -34,8 +34,41 @@ async function matchOne(match: string, first?: boolean): Promise<CdpTarget> {
   return hits[0]
 }
 
-/** Resolve to an EXISTING live tab. Never creates. For read/snapshot/click/fill/close. */
+/** Match a CROSS-ORIGIN child iframe (OOPIF) by URL/title substring. Out-of-process
+ *  iframes are first-class CDP targets (type === 'iframe') with their own
+ *  webSocketDebuggerUrl, so once resolved every page command drives them exactly
+ *  like a tab. (Same-origin iframes share the parent's target and never appear
+ *  here — they're already reachable from the parent page.) */
+async function matchIframe(match: string, first?: boolean): Promise<CdpTarget> {
+  const frames = (await listTargets()).filter((t) => t.type === 'iframe')
+  const m = match.toLowerCase()
+  const hits = frames.filter(
+    (f) => (f.url ?? '').toLowerCase().includes(m) || (f.title ?? '').toLowerCase().includes(m),
+  )
+  if (hits.length === 0) {
+    throw new Error(
+      `no cross-origin iframe matches "${match}" — run \`browser-automation list --frames\` to see them. ` +
+        `(Same-origin iframes aren't separate targets; reach them from the parent page without -F.)`,
+    )
+  }
+  if (hits.length > 1 && !first) {
+    throw new Error(
+      `-F "${match}" matches ${hits.length} iframes — narrow it, address one exactly with \`-t <iframeTargetId>\` ` +
+        `(from \`list --frames\`), or pass --first:\n` +
+        hits.map((h) => `  ${h.id.slice(0, 12)}  ${(h.url ?? '').slice(0, 70)}`).join('\n'),
+    )
+  }
+  return hits[0]
+}
+
+/** Resolve to an EXISTING live tab — or, with `-F`, a cross-origin child iframe
+ *  of one. Never creates. For read/snapshot/click/fill/eval/close. */
 export async function resolveExistingTargetId(opts: TargetOpts): Promise<string> {
+  // -F descends into an OOPIF. It resolves to the iframe's own target, which the
+  // caller then drives with the identical machinery used for a page target.
+  if (opts.frame) {
+    return (await matchIframe(opts.frame, opts.first)).id
+  }
   if (opts.target) {
     return resolveTargetIdArg(opts.target)
   }
@@ -62,4 +95,4 @@ export async function resolveOrCreateTargetId(opts: TargetOpts): Promise<{ targe
   return resolveLiveTarget(opts.session || defaultSessionName())
 }
 
-export { matchOne }
+export { matchOne, matchIframe }

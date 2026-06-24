@@ -64,6 +64,15 @@ Page commands pick a tab with a selector (precedence `-t` > `-m` > `-s`):
 - `-t <targetId>` — an exact tab (from `list`).
 - `-s <name>` — a saved **session** bookmark (default `$BAC_SESSION`, else `default`).
 
+A fourth selector, `-F <substr>`, is orthogonal — it descends **into** a tab,
+to a **cross-origin child iframe** (OOPIF) whose URL/title contains the
+substring (e.g. `-F js.stripe.com` to fill Stripe Elements). OOPIFs are
+first-class CDP targets, so every page command (`snapshot`/`click`/`fill`/
+`read`/`eval`) works inside them. Same-origin iframes aren't separate targets —
+they're already reachable from the parent page, no `-F`. Discover frames with
+`list --frames`; an ambiguous `-F` errors (narrow it, use `-t <iframeTargetId>`,
+or `--first`).
+
 Sessions are optional bookmarks, not locks — there's no one-session-one-tab rule.
 
 ```bash
@@ -113,8 +122,9 @@ same one-action-per-snapshot rule as Playwright refs.
   `input`/`change`), which works on background tabs (native CDP mouse events do
   not reliably reach a non-foreground tab in headed Chrome). Synthetic events are
   not `isTrusted`, so a few hard anti-bot/payment flows may reject them.
-- `read`/`snapshot` see the page + same-origin frames, not cross-origin iframes
-  (each is its own CDP target).
+- `read`/`snapshot` see the page + same-origin frames. A **cross-origin iframe**
+  is its own CDP target — reach it with `-F <substr>` (or `-t <iframeTargetId>`
+  from `list --frames`); every page command then runs inside that frame.
 - `launch` resolves Chrome on macOS/Linux; elsewhere start Chrome manually with
   `--remote-debugging-port=9223 --user-data-dir="<profile>"`.
 
