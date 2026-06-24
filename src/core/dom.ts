@@ -18,6 +18,8 @@ export interface SnapshotResult {
   url: string
   title: string
   count: number
+  overlayCount?: number
+  overlayText?: string
   elements: Array<{ ref: string; role: string; tag: string; type: string; name: string; state: string }>
 }
 
@@ -81,10 +83,24 @@ export const SNAPSHOT_EXPR = WALK + `(() => {
     const disabled=(el.disabled===true)||truthy(el.getAttribute&&el.getAttribute('aria-disabled'));
     return [checked?'checked':'',disabled?'disabled':''].filter(Boolean).join(' ');
   };
-  const out=[]; let i=1;
+  // Open overlays (menus, dialogs, popovers, listboxes) are almost always WHAT
+  // the agent wants to act on next — but they're portal-rendered at the END of
+  // the DOM, so on a busy page their items fall past the element cap and vanish
+  // from the snapshot (e.g. a dropdown menu's items, a modal's buttons). Collect
+  // interactive elements in two buckets and emit OVERLAY ITEMS FIRST and uncapped,
+  // so an open menu/dialog is always addressable. Standard ARIA + native popover
+  // selectors keep this generic (no app-specific class names).
+  const OVERLAY='[role=dialog],[role=menu],[role=listbox],[role=menubar],[aria-modal=true],dialog[open]';
+  const inOverlay=(el)=>{ try{ if(el.closest&&el.closest(OVERLAY)) return true; }catch(e){} try{ if(el.matches&&el.matches(':popover-open,'+OVERLAY)) return true; }catch(e){} return false; };
+  const overlayEls=[], restEls=[];
   __baEachEl((el)=>{
-    if(out.length>=200) return;
     if(!isInteractive(el)||!__baVisible(el))return;
+    (inOverlay(el)?overlayEls:restEls).push(el);
+  });
+  const CAP=200;
+  const chosen=overlayEls.concat(restEls.slice(0,Math.max(0,CAP-overlayEls.length)));
+  const out=[]; let i=1;
+  for(const el of chosen){
     const ref='e'+(i++);
     el.setAttribute('data-ba-ref',ref);
     const tag=el.tagName.toLowerCase();
@@ -92,8 +108,21 @@ export const SNAPSHOT_EXPR = WALK + `(() => {
     const type=el.getAttribute('type')||'';
     let name=(el.getAttribute('aria-label')||el.getAttribute('placeholder')||(el.value||'')||el.innerText||el.textContent||el.getAttribute('title')||el.getAttribute('name')||'').toString().trim().replace(/\\s+/g,' ').slice(0,80);
     out.push({ref,role,tag,type,name,state:stateOf(el)});
-  });
-  return {url:location.href,title:document.title,count:out.length,elements:out};
+  }
+  // The open overlay's full text — so a caller can read a dialog's prompt
+  // (e.g. "send this invitation to <name>", an email-gate warning) WITHOUT a
+  // second round-trip. That matters for light-dismiss popovers, which close on
+  // the next stray interaction: getting refs + prompt text in one snapshot lets
+  // the caller verify and act before the overlay can vanish. Prefer a top-layer
+  // popover (always stacked on top); else the last-in-DOM ARIA overlay.
+  let overlayText='';
+  try{
+    const pops=[...document.querySelectorAll('[popover]')].filter(e=>{try{return e.matches(':popover-open')}catch(x){return false}});
+    const others=[...document.querySelectorAll(OVERLAY)].filter(e=>__baVisible(e));
+    const r=pops.length?pops[pops.length-1]:(others.length?others[others.length-1]:null);
+    if(r) overlayText=(r.innerText||'').replace(/\\s+/g,' ').trim().slice(0,600);
+  }catch(e){}
+  return {url:location.href,title:document.title,count:out.length,overlayCount:overlayEls.length,overlayText,elements:out};
 })()`
 
 export function clickExpr(ref: string): string {
