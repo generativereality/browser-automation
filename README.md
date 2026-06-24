@@ -104,6 +104,8 @@ browser-automation bind -s bank -m nordnet    # …or adopt it into a session
 | `read (-s\|-m\|-t) [selector]` | Print page text (or a CSS selector's text) |
 | `eval (-s\|-m\|-t) <js>` | Evaluate a JS expression in the tab (escape hatch) |
 | `download (-s\|-m\|-t) (--click <ref>\|--url <href>)` | Capture a file/CSV download, wait for completion, print the path |
+| `setfiles (-s\|-m\|-t) <ref> <path…>` | Set files on a known `<input type=file>` by ref (fires input/change) |
+| `upload (-s\|-m\|-t) --click <ref> <path…>` | Upload via a button that opens a file chooser (transient/custom inputs) |
 | `network (-s\|-m\|-t) [--reload\|--click\|--nav] [--filter --headers --body]` | Capture network requests (find the API, headers, response bodies) |
 | `screenshot (-s\|-m\|-t) [--full] [-o path]` | Save a PNG screenshot (viewport or full page) |
 | `close (-s\|-m\|-t) [--tab]` | Forget the session (tab stays open); `--tab` also closes the browser tab |
@@ -125,6 +127,18 @@ same one-action-per-snapshot rule as Playwright refs.
 - `read`/`snapshot` see the page + same-origin frames. A **cross-origin iframe**
   is its own CDP target — reach it with `-F <substr>` (or `-t <iframeTargetId>`
   from `list --frames`); every page command then runs inside that frame.
+- **File upload** has two entry points (Playwright's two paths). For a static
+  `<input type=file>` you can snapshot, use `setfiles <ref> <path…>`. For a custom
+  "attach" button that opens a native file chooser — and reads a *transient* input
+  that only exists during the chooser (App Store Connect's "Attach File", many
+  React dropzones) — use `upload --click <ref> <path…>`: it intercepts the chooser
+  and sets files on whatever input Chrome opens. Setting the static input via JS
+  won't work there; the button uses its own throwaway input. `upload` judges
+  success by the `change` event (reports "delivered"), since apps reset the input
+  to 0 after consuming the file — so `files=0` afterward is normal. **Verify by
+  re-snapshot/screenshot and don't blindly retry:** the file may stage as a row in
+  an attachment *list* (not a single chip), and each successful run adds another
+  attachment, so retrying can silently create duplicates.
 - `launch` resolves Chrome on macOS/Linux; elsewhere start Chrome manually with
   `--remote-debugging-port=9223 --user-data-dir="<profile>"`.
 

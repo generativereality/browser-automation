@@ -8,6 +8,8 @@ import { fillCommand } from './fill.js'
 import { readCommand } from './read.js'
 import { evalCommand } from './eval.js'
 import { downloadCommand } from './download.js'
+import { setfilesCommand } from './setfiles.js'
+import { uploadCommand } from './upload.js'
 import { networkCommand } from './network.js'
 import { screenshotCommand } from './screenshot.js'
 import { listCommand } from './list.js'
@@ -35,6 +37,8 @@ const subCommands = new Map<string, Command<any>>([
   ['read', readCommand],
   ['eval', evalCommand],
   ['download', downloadCommand],
+  ['setfiles', setfilesCommand],
+  ['upload', uploadCommand],
   ['network', networkCommand],
   ['screenshot', screenshotCommand],
   ['shot', screenshotCommand],
