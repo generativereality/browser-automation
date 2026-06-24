@@ -1,6 +1,6 @@
 {
   "name": "@generativereality/browser-automation",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Daemonless, per-tab-isolated browser automation CLI for Claude Code. Drives one shared headed Chrome (persistent profile + extensions) over per-target CDP — many parallel sessions, no focus stealing, nothing long-lived to crash.",
   "type": "module",
   "bin": {
