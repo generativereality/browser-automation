@@ -25,7 +25,9 @@ export const snapshotCommand = define({
       process.stdout.write(JSON.stringify(snap, null, 2) + '\n')
       return
     }
-    consola.log(`# ${snap.title}\n# ${snap.url}\n# ${snap.count} interactive elements`)
+    const overlayNote = snap.overlayCount ? ` (${snap.overlayCount} in an open overlay, listed first)` : ''
+    consola.log(`# ${snap.title}\n# ${snap.url}\n# ${snap.count} interactive elements${overlayNote}`)
+    if (snap.overlayText) consola.log(`# overlay: ${snap.overlayText}`)
     for (const el of snap.elements) {
       const label = el.type ? `${el.role}[${el.type}]` : el.role
       const st = el.state ? `[${el.state}] ` : ''
