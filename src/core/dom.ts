@@ -213,7 +213,19 @@ export function focusAndSelectExpr(ref: string): string {
     if(!el)return {err:'ref not found: '+${r}+' (re-run snapshot)'};
     el.scrollIntoView({block:'center',inline:'center'});
     el.focus();
-    try{ if(typeof el.select==='function') el.select(); }catch(e){}
+    // Select-all in JS so the subsequent Input.insertText REPLACES the field
+    // rather than appending. Doing this here (not via a synthetic Cmd+A key
+    // chord) keeps the trusted-fill path from ever dispatching a Meta-modified
+    // key event — an unhandled one of those leaks to the macOS main menu and
+    // pops system UI (e.g. "About This Mac"). Inputs/textareas: .select();
+    // contenteditable: the Selection API.
+    try{
+      if(typeof el.select==='function') el.select();
+      else if(el.isContentEditable){
+        const range=document.createRange();range.selectNodeContents(el);
+        const sel=window.getSelection();sel.removeAllRanges();sel.addRange(range);
+      }
+    }catch(e){}
     return {ok:true,tag:el.tagName.toLowerCase(),len:el.value!==undefined?String(el.value).length:0};
   })()`
 }

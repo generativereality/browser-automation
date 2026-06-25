@@ -6,10 +6,6 @@ import { isValidRef } from '../core/target.js'
 import { evaluate, withPage } from '../core/cdp.js'
 import { fillExpr, focusAndSelectExpr, readValueAndTrackerExpr } from '../core/dom.js'
 
-// Cross-platform select-all modifier: Meta on macOS, Control everywhere else.
-// CDP Input.dispatchKeyEvent modifier bits: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift.
-const SELECT_ALL_MOD = process.platform === 'darwin' ? 4 : 2
-
 export const fillCommand = define({
   name: 'fill',
   description: 'Type a value into an input/textarea/contenteditable by ref',
@@ -44,44 +40,34 @@ export const fillCommand = define({
       if (focus.err) { consola.error(focus.err); process.exit(1) }
 
       await withPage(targetId, async (s) => {
-        // Belt-and-braces select-all over the field via the CDP key command,
-        // in case `.select()` didn't apply (e.g. contenteditable). Modifier
-        // is platform-aware so the key chord matches what the browser binds
-        // selectAll to natively.
-        await s.send('Input.dispatchKeyEvent', {
-          type: 'rawKeyDown',
-          key: 'a',
-          code: 'KeyA',
-          windowsVirtualKeyCode: 65,
-          nativeVirtualKeyCode: 65,
-          modifiers: SELECT_ALL_MOD,
-          commands: ['selectAll'],
-        })
-        await s.send('Input.dispatchKeyEvent', {
-          type: 'keyUp',
-          key: 'a',
-          code: 'KeyA',
-          windowsVirtualKeyCode: 65,
-          nativeVirtualKeyCode: 65,
-          modifiers: SELECT_ALL_MOD,
-        })
-        // insertText replaces the selected text with the new value.
+        // The field was already select-all'd in JS by focusAndSelectExpr above
+        // (inputs/textareas via .select(), contenteditable via the Selection
+        // API), so insertText REPLACES the existing value.
+        //
+        // ⚠️ We deliberately do NOT send a synthetic Cmd/Ctrl+A select-all key
+        // chord here. On macOS an unhandled Meta-modified `dispatchKeyEvent`
+        // (e.g. when the focused ref isn't a text field that consumes Cmd+A)
+        // is mirrored to the native key pipeline and offered to the main menu
+        // bar, which intermittently pops system UI — observed launching macOS
+        // "About This Mac" (System Information.app) during automated fills.
+        // JS select-all + insertText avoids dispatching any modified key event.
         await s.send('Input.insertText', { text: value })
 
         if (submit) {
+          // Enter to submit — no modifier, and no nativeVirtualKeyCode (a bogus
+          // platform keycode is what gets mis-mirrored natively; key/code/
+          // windowsVirtualKeyCode are enough for the page to see a real Enter).
           await s.send('Input.dispatchKeyEvent', {
             type: 'rawKeyDown',
             key: 'Enter',
             code: 'Enter',
             windowsVirtualKeyCode: 13,
-            nativeVirtualKeyCode: 13,
           })
           await s.send('Input.dispatchKeyEvent', {
             type: 'keyUp',
             key: 'Enter',
             code: 'Enter',
             windowsVirtualKeyCode: 13,
-            nativeVirtualKeyCode: 13,
           })
         }
       })
