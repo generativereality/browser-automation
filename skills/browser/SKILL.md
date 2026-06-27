@@ -212,18 +212,23 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   all — a `drop` listener reading `e.dataTransfer.files` (vocalremover-style audio
   tools, many image/video drop zones). Neither `setfiles` nor `upload` applies;
   use `drop <ref> <path…>`. By default it fires a genuinely-**trusted** CDP drag
-  (`Input.dispatchDragEvent`) carrying the real files from disk: brings the tab to
-  front, waits for focus+visible and for the zone to be actionable, then
-  dragEnter→dragOver→drop — the same foreground/actionability discipline as
-  `click --trusted` (CDP input no-ops on a backgrounded tab). `--js` instead
-  dispatches a synthetic (isTrusted=false) `DataTransfer` drop without stealing
-  focus, for zones that accept synthetic events. The `<ref>` can be any snapshot
-  element sitting over the drop region (a heading/button inside the zone) — the
-  drop bubbles to the zone/document handler, so it works even when the drop div
-  itself isn't snapshot-interactive. Note: some sites gate the drop handler so
-  tightly that even a trusted drop won't trigger their pipeline (server-side
-  validation, subscription walls); verify with `screenshot`/`network` and fall
-  back to the site's own upload API if the drop visibly no-ops.
+  (`Input.dispatchDragEvent`) carrying the real files from disk: it force-fronts
+  the tab (bringToFront + focus emulation + active lifecycle — so the tab reports
+  focused+visible even when the Chrome window isn't the frontmost OS window),
+  waits for the zone to be actionable, then dragEnter→dragOver→drop. The
+  force-front matters: drop-zone uploaders commonly do their work only inside a
+  **user activation**, and CDP input grants no activation on a tab the renderer
+  considers `hidden` — which it is whenever the window is occluded (the usual
+  case while you work in the terminal). vocalremover.org is the canonical example:
+  the file reaches its `change`/`drop` handler either way, but it only uploads +
+  separates once activation is present. `--js` instead dispatches a synthetic
+  (isTrusted=false) `DataTransfer` drop **without** force-fronting/stealing focus,
+  for zones that accept synthetic events. The `<ref>` can be any snapshot element
+  sitting over the drop region (a heading/button inside the zone) — the drop
+  bubbles to the zone/document handler, so it works even when the drop div itself
+  isn't snapshot-interactive. After the drop, `read`/`screenshot`/`network` to
+  confirm processing started, then grab the result (often a download endpoint you
+  can pull with `download --url`).
 - **Page still loading.** `goto` waits for the load event, but SPAs render after.
   If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
   once a known element should be present.

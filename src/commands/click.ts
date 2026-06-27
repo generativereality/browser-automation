@@ -3,7 +3,7 @@ import { consola } from 'consola'
 import { resolveExistingTargetId } from '../core/resolve.js'
 import { targetArgs, targetOpts } from '../core/args.js'
 import { isValidRef } from '../core/target.js'
-import { evaluate, withPage } from '../core/cdp.js'
+import { evaluate, withPage, forceForeground } from '../core/cdp.js'
 import { clickExpr, actionabilityExpr } from '../core/dom.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -51,7 +51,9 @@ export const clickCommand = define({
           return res.result?.value as T
         }
 
-        await s.send('Page.bringToFront').catch(() => {})
+        // Force focused+visible so CDP input lands even when the Chrome window
+        // isn't the frontmost OS window (the usual case). See forceForeground.
+        await forceForeground(s)
         // 1. Wait for the tab to actually be foreground (focused + visible).
         const focusDeadline = Date.now() + 2000
         while (Date.now() < focusDeadline) {

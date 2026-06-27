@@ -5,7 +5,7 @@ import { existsSync, statSync, readFileSync } from 'node:fs'
 import { resolveExistingTargetId } from '../core/resolve.js'
 import { targetArgs, targetOpts } from '../core/args.js'
 import { isValidRef } from '../core/target.js'
-import { evaluate, withPage } from '../core/cdp.js'
+import { evaluate, withPage, forceForeground } from '../core/cdp.js'
 import { actionabilityExpr, dropExpr } from '../core/dom.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -85,7 +85,9 @@ export const dropCommand = define({
         return res.result?.value as T
       }
 
-      await s.send('Page.bringToFront').catch(() => {})
+      // Force the tab focused+visible for trusted input (and the user activation
+      // a drop-zone uploader needs) without stealing OS focus. See forceForeground.
+      await forceForeground(s)
       // 1. Wait for the tab to actually be foreground (focused + visible).
       const focusDeadline = Date.now() + 2000
       while (Date.now() < focusDeadline) {

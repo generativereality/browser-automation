@@ -135,6 +135,28 @@ export async function withPage<T>(targetId: string, fn: (s: CdpSession) => Promi
   }
 }
 
+/** Make a page target behave as the foreground tab for trusted CDP input,
+ *  WITHOUT stealing OS focus from the user's other apps.
+ *
+ *  CDP `Input.*` events (and the user-activation they grant) are dropped by the
+ *  renderer when the tab's `visibilityState` is `hidden` — which it is whenever
+ *  the automation Chrome window isn't the frontmost OS window (the normal case:
+ *  the user is in their terminal). `Page.bringToFront` alone does NOT fix this;
+ *  the tab still reports `hidden`. `Emulation.setFocusEmulationEnabled` forces
+ *  the renderer to treat itself as focused+visible regardless of the real window
+ *  state (this is how Playwright drives backgrounded/headless pages), and
+ *  `Page.setWebLifecycleState: active` un-throttles a frozen tab. Together they
+ *  flip `document.hasFocus()`+`visibilityState:visible` on, so a trusted click /
+ *  drag actually lands and grants user activation — which activation-gated flows
+ *  (e.g. drop-zone uploaders that only start work inside a user gesture) require.
+ *
+ *  All three are best-effort: older Chrome builds may not expose every command. */
+export async function forceForeground(s: CdpSession): Promise<void> {
+  await s.send('Page.bringToFront').catch(() => {})
+  await s.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
+  await s.send('Page.setWebLifecycleState', { state: 'active' }).catch(() => {})
+}
+
 /** Run `fn` against the browser-level endpoint (Target.* commands), then close. */
 async function withBrowser<T>(fn: (s: CdpSession) => Promise<T>): Promise<T> {
   const s = await connect(await browserWsUrl())

@@ -144,13 +144,19 @@ same one-action-per-snapshot rule as Playwright refs.
   at all — a `drop` listener reading `e.dataTransfer.files` (vocalremover-style
   audio tools, many image/video drop zones). `drop <ref> <path…>` fires a
   genuinely-**trusted** CDP drag (`Input.dispatchDragEvent`) carrying the real
-  files from disk: it brings the tab to front, waits for focus+visible and for
-  the zone to be actionable, then dragEnter→dragOver→drop — same discipline as
-  `click --trusted`. `--js` instead dispatches a synthetic (isTrusted=false)
-  `DataTransfer` drop without stealing focus, for zones that accept synthetic
-  events. The `<ref>` is any snapshot element over the drop region — the drop
-  bubbles to the zone/document handler, so a heading or button inside the zone
-  works even when the zone div itself isn't snapshot-interactive.
+  files from disk: it force-fronts the tab (bringToFront + focus emulation +
+  active lifecycle, so the renderer reports focused+visible even when the Chrome
+  window is occluded), waits for the zone to be actionable, then
+  dragEnter→dragOver→drop — same discipline as `click --trusted`. The force-front
+  matters because drop-zone uploaders often act only inside a **user activation**,
+  which CDP input can't grant on a tab the renderer considers `hidden`
+  (vocalremover.org is the canonical case). `--js` instead dispatches a synthetic
+  (isTrusted=false) `DataTransfer` drop without force-fronting/stealing focus, for
+  zones that accept synthetic events. The `<ref>` is any snapshot element over the
+  drop region — the drop bubbles to the zone/document handler, so a heading or
+  button inside the zone works even when the zone div itself isn't
+  snapshot-interactive. After dropping, confirm with `read`/`screenshot` and pull
+  the result (often a `download --url` endpoint).
 - `launch` resolves Chrome on macOS/Linux; elsewhere start Chrome manually with
   `--remote-debugging-port=9223 --user-data-dir="<profile>"`.
 
