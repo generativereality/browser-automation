@@ -85,6 +85,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Download a file / CSV export | `browser-automation download -m bank --click e42` (or `--url <href>`) |
 | Set files on a known `<input type=file>` | `browser-automation setfiles -m app e7 ~/Desktop/clip.mp4` |
 | Upload via a button that opens a file chooser | `browser-automation upload -m app --click e9 ~/Desktop/clip.mp4` |
+| Drop file(s) onto a drag-and-drop zone | `browser-automation drop -m app e7 ~/Desktop/clip.mp4` (add `--js` for a synthetic drop) |
 | Inspect network (find the API, headers, bodies) | `browser-automation network -m bank --reload --filter api --headers --body` |
 | Screenshot a tab | `browser-automation screenshot -m op.fi --full -o shot.png` |
 | Forget a session (tab stays open) | `browser-automation close -s work` |
@@ -186,7 +187,7 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   whose JS handler builds a client-side **blob** and clicks it via a *nested*
   synthetic click won't fire (Chrome activation quirk) — for those, grab the
   underlying export URL/endpoint and use `--url`, or the site's API.
-- **File upload.** Two paths, mirroring Playwright. For a static, snapshot-able
+- **File upload.** Three paths. The first two mirror Playwright. For a static, snapshot-able
   `<input type=file>`, use `setfiles <ref> <path…>` — it resolves the ref and
   calls `DOM.setFileInputFiles` (a file input's `.files` is read-only to page JS,
   so a value-setter/`eval` can't populate it; CDP can, and fires trusted
@@ -207,6 +208,22 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   successful run **adds another attachment** — retrying a "did it work?" upload a
   few times silently produces duplicates (this cost us a dozen copies on a live ASC
   reply). Upload once, verify, and only re-run if verification shows nothing staged.
+  The **third path is drag-and-drop**, for zones with NO `<input type=file>` at
+  all — a `drop` listener reading `e.dataTransfer.files` (vocalremover-style audio
+  tools, many image/video drop zones). Neither `setfiles` nor `upload` applies;
+  use `drop <ref> <path…>`. By default it fires a genuinely-**trusted** CDP drag
+  (`Input.dispatchDragEvent`) carrying the real files from disk: brings the tab to
+  front, waits for focus+visible and for the zone to be actionable, then
+  dragEnter→dragOver→drop — the same foreground/actionability discipline as
+  `click --trusted` (CDP input no-ops on a backgrounded tab). `--js` instead
+  dispatches a synthetic (isTrusted=false) `DataTransfer` drop without stealing
+  focus, for zones that accept synthetic events. The `<ref>` can be any snapshot
+  element sitting over the drop region (a heading/button inside the zone) — the
+  drop bubbles to the zone/document handler, so it works even when the drop div
+  itself isn't snapshot-interactive. Note: some sites gate the drop handler so
+  tightly that even a trusted drop won't trigger their pipeline (server-side
+  validation, subscription walls); verify with `screenshot`/`network` and fall
+  back to the site's own upload API if the drop visibly no-ops.
 - **Page still loading.** `goto` waits for the load event, but SPAs render after.
   If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
   once a known element should be present.

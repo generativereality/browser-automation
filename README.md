@@ -106,6 +106,7 @@ browser-automation bind -s bank -m nordnet    # …or adopt it into a session
 | `download (-s\|-m\|-t) (--click <ref>\|--url <href>)` | Capture a file/CSV download, wait for completion, print the path |
 | `setfiles (-s\|-m\|-t) <ref> <path…>` | Set files on a known `<input type=file>` by ref (fires input/change) |
 | `upload (-s\|-m\|-t) --click <ref> <path…>` | Upload via a button that opens a file chooser (transient/custom inputs) |
+| `drop (-s\|-m\|-t) [--js] <ref> <path…>` | Drop file(s) onto a drag-and-drop zone by ref (trusted CDP drag by default; `--js` for a synthetic drop) |
 | `network (-s\|-m\|-t) [--reload\|--click\|--nav] [--filter --headers --body]` | Capture network requests (find the API, headers, response bodies) |
 | `screenshot (-s\|-m\|-t) [--full] [-o path]` | Save a PNG screenshot (viewport or full page) |
 | `close (-s\|-m\|-t) [--tab]` | Forget the session (tab stays open); `--tab` also closes the browser tab |
@@ -139,6 +140,17 @@ same one-action-per-snapshot rule as Playwright refs.
   re-snapshot/screenshot and don't blindly retry:** the file may stage as a row in
   an attachment *list* (not a single chip), and each successful run adds another
   attachment, so retrying can silently create duplicates.
+- **Drag-and-drop upload** is a third path, for zones with no `<input type=file>`
+  at all — a `drop` listener reading `e.dataTransfer.files` (vocalremover-style
+  audio tools, many image/video drop zones). `drop <ref> <path…>` fires a
+  genuinely-**trusted** CDP drag (`Input.dispatchDragEvent`) carrying the real
+  files from disk: it brings the tab to front, waits for focus+visible and for
+  the zone to be actionable, then dragEnter→dragOver→drop — same discipline as
+  `click --trusted`. `--js` instead dispatches a synthetic (isTrusted=false)
+  `DataTransfer` drop without stealing focus, for zones that accept synthetic
+  events. The `<ref>` is any snapshot element over the drop region — the drop
+  bubbles to the zone/document handler, so a heading or button inside the zone
+  works even when the zone div itself isn't snapshot-interactive.
 - `launch` resolves Chrome on macOS/Linux; elsewhere start Chrome manually with
   `--remote-debugging-port=9223 --user-data-dir="<profile>"`.
 
