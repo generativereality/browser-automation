@@ -260,6 +260,38 @@ export function findRefExpr(ref: string): string {
   return WALK + `(() => __baFind(${r}))()`
 }
 
+/** JS-dispatched drag-and-drop of injected files onto an element by ref. Builds
+ *  real File objects from base64 bytes, assembles a DataTransfer, and fires the
+ *  full dragenter→dragover→drop sequence (each carrying dataTransfer.files) so
+ *  drop-zone handlers that read `e.dataTransfer.files` fire. The events are
+ *  synthetic (isTrusted=false) — drop zones that gate on isTrusted need the
+ *  trusted CDP path (`drop` without --js) instead. `files` is [{name,type,b64}]. */
+export function dropExpr(ref: string, files: Array<{ name: string; type: string; b64: string }>): string {
+  const r = JSON.stringify(ref)
+  const f = JSON.stringify(files)
+  return WALK + `(() => {
+    const el=__baFind(${r});
+    if(!el)return {err:'ref not found: '+${r}+' (re-run snapshot)'};
+    el.scrollIntoView({block:'center',inline:'center'});
+    const dt=new DataTransfer();
+    for(const spec of ${f}){
+      const bin=atob(spec.b64); const u8=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
+      dt.items.add(new File([u8],spec.name,{type:spec.type}));
+    }
+    const b=el.getBoundingClientRect();
+    const cx=b.left+b.width/2, cy=b.top+b.height/2;
+    const fire=(type)=>{
+      const ev=new DragEvent(type,{bubbles:true,cancelable:true,clientX:cx,clientY:cy});
+      try{ Object.defineProperty(ev,'dataTransfer',{value:dt}); }catch(e){}
+      el.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    fire('dragenter'); fire('dragover'); fire('drop');
+    return {ok:true,tag:el.tagName.toLowerCase(),count:dt.files.length};
+  })()`
+}
+
 export function readExpr(selector?: string): string {
   const root = selector ? `__baQuery(${JSON.stringify(selector)})` : `document.body`
   const notFound = selector ? `'(no element matches ' + ${JSON.stringify(selector)} + ')'` : `''`

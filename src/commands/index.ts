@@ -10,6 +10,7 @@ import { evalCommand } from './eval.js'
 import { downloadCommand } from './download.js'
 import { setfilesCommand } from './setfiles.js'
 import { uploadCommand } from './upload.js'
+import { dropCommand } from './drop.js'
 import { networkCommand } from './network.js'
 import { screenshotCommand } from './screenshot.js'
 import { listCommand } from './list.js'
@@ -39,6 +40,7 @@ const subCommands = new Map<string, Command<any>>([
   ['download', downloadCommand],
   ['setfiles', setfilesCommand],
   ['upload', uploadCommand],
+  ['drop', dropCommand],
   ['network', networkCommand],
   ['screenshot', screenshotCommand],
   ['shot', screenshotCommand],
