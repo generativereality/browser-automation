@@ -4,7 +4,7 @@ import { loadSession, saveSession, defaultSessionName } from '../core/session.js
 import { normalizeUrl } from '../core/target.js'
 import { resolveOrCreateTargetId } from '../core/resolve.js'
 import { targetArgs, targetOpts } from '../core/args.js'
-import { navigate } from '../core/cdp.js'
+import { navigate, withPage, forceForeground } from '../core/cdp.js'
 
 export const gotoCommand = define({
   name: 'goto',
@@ -12,6 +12,11 @@ export const gotoCommand = define({
   args: {
     ...targetArgs,
     url: { type: 'positional', description: 'URL to navigate to' },
+    focus: {
+      type: 'boolean',
+      description:
+        'After navigating, make the tab report visible+focused (see `focus`). Needed for SPAs that never fetch while hidden',
+    },
   },
   async run(ctx) {
     const url = ctx.positionals[1]
@@ -21,6 +26,10 @@ export const gotoCommand = define({
 
     const { targetId, created } = await resolveOrCreateTargetId(opts)
     await navigate(targetId, target)
+
+    // Opt-in: some SPAs gate their first data fetch on document.visibilityState
+    // and sit on a spinner forever in a background tab. See the `focus` command.
+    if (ctx.values.focus) await withPage(targetId, (s) => forceForeground(s))
 
     // Persist the binding only in pure session mode (no explicit -m/-t).
     if (!opts.match && !opts.target) {

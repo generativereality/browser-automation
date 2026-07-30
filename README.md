@@ -109,7 +109,37 @@ browser-automation bind -s bank -m nordnet    # …or adopt it into a session
 | `drop (-s\|-m\|-t) [--js] <ref> <path…>` | Drop file(s) onto a drag-and-drop zone by ref (trusted CDP drag by default; `--js` for a synthetic drop) |
 | `network (-s\|-m\|-t) [--reload\|--click\|--nav] [--filter --headers --body]` | Capture network requests (find the API, headers, response bodies) |
 | `screenshot (-s\|-m\|-t) [--full] [-o path]` | Save a PNG screenshot (viewport or full page) |
+| `focus (-s\|-m\|-t)` | Make the tab report visible+focused, for SPAs that never render while hidden (no OS focus stealing) |
 | `close (-s\|-m\|-t) [--tab]` | Forget the session (tab stays open); `--tab` also closes the browser tab |
+
+## Tabs are hidden, and some SPAs never render while hidden
+
+Tabs are created in the background and never activated, so `document.visibilityState`
+is `hidden`. Most pages don't care. But an SPA that gates its first data fetch on
+visibility — or uses a data layer that pauses while hidden — will sit on a spinner
+**forever**, and `read`/`snapshot`/`eval` will keep returning "Loading…" with no
+error to explain it.
+
+The tell is a page that renders in a normal browser but not here, and:
+
+```sh
+browser-automation eval -s app 'document.visibilityState'   # -> "hidden"
+```
+
+Fix it with `focus`, or navigate with `--focus`:
+
+```sh
+browser-automation focus -s app
+browser-automation goto -s app --focus https://app.example.com/dashboard
+```
+
+Both flip the tab to `visible`+focused via `Page.bringToFront` +
+`Emulation.setFocusEmulationEnabled` + `Page.setWebLifecycleState` — the same
+trio `click` and `drop` already use for trusted input. It does **not** raise the
+Chrome window or steal focus from your terminal.
+
+Note it is per-navigation: the tab can revert to `hidden` later, so for a long
+flow re-run `focus` if a page starts hanging again.
 
 ## How refs work
 
