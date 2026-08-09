@@ -18,6 +18,7 @@ import { closeCommand } from './close.js'
 import { bindCommand } from './bind.js'
 import { launchCommand } from './launch.js'
 import { doctorCommand } from './doctor.js'
+import { portCommand } from './port.js'
 
 const defaultCommand = define({
   name: 'browser-automation',
@@ -50,6 +51,7 @@ const subCommands = new Map<string, Command<any>>([
   ['bind', bindCommand],
   ['launch', launchCommand],
   ['doctor', doctorCommand],
+  ['port', portCommand],
 ])
 
 export async function run(): Promise<void> {

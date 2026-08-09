@@ -18,21 +18,21 @@
 #   127.0.0.1 is machine-wide and CDP has no authentication, so a single
 #   hardcoded port means the first macOS account to launch owns it and every
 #   other account's automation silently drives that account's browser. The port
-#   is therefore derived from the uid — see `cdpPort()` in src/core/cdp.ts,
-#   which computes the same number and passes it here with --port.
+#   is therefore derived from the uid, by `cdpPort()` in src/core/cdp.ts — the
+#   one place that decides it. This script is told, or asks.
 set -euo pipefail
 
 # --- port ------------------------------------------------------------------
-first_human_uid() { [ "$(uname -s)" = "Darwin" ] && echo 501 || echo 1000; }
-derive_port() {
-  local uid base first offset
-  uid="$(id -u)"; base=9223; first="$(first_human_uid)"
-  offset=$(( uid - first ))
-  if [ "$offset" -lt 0 ] || [ "$offset" -gt 499 ]; then
-    echo $(( base + 500 + (uid % 500) ))
-  else
-    echo $(( base + offset ))
+# **Asked for, never recomputed.** `cdpPort()` in src/core/cdp.ts is the only
+# place the port is decided; the CLI passes it here with --port, and a person
+# running this script by hand gets the same number by asking the CLI that ships
+# beside it. A second copy of the formula is a second answer waiting to happen.
+ask_cli_for_port() {
+  local dist="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/dist/index.js"
+  if [ -f "$dist" ] && command -v node >/dev/null 2>&1; then
+    node "$dist" port 2>/dev/null && return 0
   fi
+  command -v browser-automation >/dev/null 2>&1 && browser-automation port 2>/dev/null
 }
 
 PORT=""
@@ -44,7 +44,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
-PORT="${PORT:-${BROWSER_AUTOMATION_PORT:-$(derive_port)}}"
+PORT="${PORT:-$(ask_cli_for_port || true)}"
+if [ -z "${PORT}" ]; then
+  echo "Error: could not work out which port to use — pass --port, or set" >&2
+  echo "       BROWSER_AUTOMATION_PORT. (This script asks the CLI beside it;" >&2
+  echo "       see cdpPort() in src/core/cdp.ts, the only place it is decided.)" >&2
+  exit 1
+fi
 
 PROFILE="${BROWSER_AUTOMATION_PROFILE:-$HOME/Library/Application Support/Google/Chrome/browser-automation}"
 # Under the caller's OWN temp dir: /tmp is shared and sticky, so with a
