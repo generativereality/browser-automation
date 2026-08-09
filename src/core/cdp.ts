@@ -9,10 +9,51 @@
 // its own targetId; we never call Target.activateTarget / Page.bringToFront,
 // so we never steal focus from the user or from sibling sessions.
 
-const DEFAULT_HOST = 'http://localhost:9223'
+// The debugging port is PER-USER, and that is not a nicety.
+//
+// `127.0.0.1` is machine-wide, not per-account, and Chrome's DevTools protocol
+// has no authentication — so with one hardcoded port, the first macOS account
+// to `launch` owns it and **every other account's automation silently drives
+// that account's browser**. Reported 2026-08-08: an app running as a second
+// user drove the first user's Chrome all day, reporting page loads it had
+// genuinely performed, in somebody else's session. Nothing errors; the tab just
+// opens in the wrong place, and on a real task that place is signed into
+// somebody's bank.
+//
+// So the port is derived from the uid. The first human account on the platform
+// keeps 9223 — the overwhelmingly common single-user case is unchanged, and an
+// upgrade does not orphan a Chrome that is already running — and everybody else
+// gets 9224, 9225, and so on.
+const BASE_PORT = 9223
+/// The uid the platform hands its first human account. Everything below it is
+/// a system account, which will not be running a headed Chrome.
+const FIRST_HUMAN_UID = process.platform === 'darwin' ? 501 : 1000
+
+/**
+ * The CDP port for THIS user.
+ *
+ * `BROWSER_AUTOMATION_PORT` overrides it, for the cases a formula cannot know
+ * about: a shared CI box, a container, or somebody who simply wants two.
+ *
+ * **`scripts/launch-chrome.sh` computes the same number** and must be kept in
+ * step — `launch` passes it explicitly, so the shell fallback only matters when
+ * a person runs that script by hand.
+ */
+export function cdpPort(): number {
+  const explicit = Number(process.env.BROWSER_AUTOMATION_PORT)
+  if (Number.isInteger(explicit) && explicit > 0 && explicit < 65536) return explicit
+  const uid = typeof process.getuid === 'function' ? process.getuid() : FIRST_HUMAN_UID
+  const offset = uid - FIRST_HUMAN_UID
+  // A uid outside the ordinary human range (a system account, or a directory
+  // service handing out five-digit ids) still gets its own port rather than
+  // sharing one. Deterministic, and `BROWSER_AUTOMATION_PORT` is the way out if
+  // two of them ever land on the same number.
+  if (offset < 0 || offset > 499) return BASE_PORT + 500 + (uid % 500)
+  return BASE_PORT + offset
+}
 
 export function cdpHost(): string {
-  return process.env.BROWSER_AUTOMATION_CDP || DEFAULT_HOST
+  return process.env.BROWSER_AUTOMATION_CDP || `http://localhost:${cdpPort()}`
 }
 
 /** A target has gone away (tab closed, or Chrome restarted -> new targetIds). */

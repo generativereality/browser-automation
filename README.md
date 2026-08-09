@@ -35,7 +35,7 @@ long-lived process**:
 
 ```bash
 npm install -g @generativereality/browser-automation
-browser-automation launch     # start the canonical Chrome on :9223 (idempotent)
+browser-automation launch     # start this user's Chrome (idempotent)
 browser-automation doctor     # verify
 ```
 
@@ -92,7 +92,7 @@ browser-automation bind -s bank -m nordnet    # …or adopt it into a session
 
 | Command | What it does |
 |---|---|
-| `launch [--status]` | Start the canonical headed Chrome on :9223 (idempotent) |
+| `launch [--status]` | Start this user's headed Chrome (idempotent) |
 | `doctor` | Diagnose Node, Chrome, targets, sessions |
 | `list` | List sessions and every open tab (id, title, url) |
 | `new -s <s> [url]` | Open a background tab for a session |
@@ -158,11 +158,18 @@ same one-action-per-snapshot rule as Playwright refs.
   snapshot-interactive. After dropping, confirm with `read`/`screenshot` and pull
   the result (often a `download --url` endpoint).
 - `launch` resolves Chrome on macOS/Linux; elsewhere start Chrome manually with
-  `--remote-debugging-port=9223 --user-data-dir="<profile>"`.
+  `--remote-debugging-port=<your port> --user-data-dir="<profile>"` — `browser-automation doctor` prints the port.
 
 ## Environment
 
-- `BROWSER_AUTOMATION_CDP` — CDP host (default `http://localhost:9223`).
+- `BROWSER_AUTOMATION_PORT` — the debugging port. **Defaults to one per user**,
+  not one per machine: `127.0.0.1` is machine-wide and CDP has no
+  authentication, so a single shared port means the first account to launch owns
+  it and every other account's automation silently drives *that* account's
+  browser — same-looking page loads, in somebody else's signed-in session. The
+  first human account on the platform keeps `9223`; the next gets `9224`, and so
+  on. `doctor` prints yours and warns if another user holds it.
+- `BROWSER_AUTOMATION_CDP` — full CDP host, overriding the port entirely.
 - `BROWSER_AUTOMATION_PROFILE` — Chrome profile dir for `launch`.
 - `BAC_SESSION` — default session name for page commands.
 

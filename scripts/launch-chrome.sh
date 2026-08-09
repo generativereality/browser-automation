@@ -2,23 +2,69 @@
 # Launch the canonical long-running headed Chrome that the browser-automation CLI drives via per-target CDP.
 #
 # Usage:
-#   ./scripts/launch-chrome.sh          # launch if not already running
-#   ./scripts/launch-chrome.sh --status # exit 0 if a CDP browser is listening on :9223, else 1
+#   ./scripts/launch-chrome.sh              # launch if not already running
+#   ./scripts/launch-chrome.sh --status     # exit 0 if a CDP browser is listening, else 1
+#   ./scripts/launch-chrome.sh --port 9224  # explicit port (the CLI always passes this)
 #
 # Why this script exists:
 #   The `browser-automation` skill prefers to drive a real, persistent Chrome
 #   profile (so logins survive reboots) over a Playwright-managed one. The
-#   convention is: one Chrome listening on --remote-debugging-port=9223 with
-#   a dedicated user-data-dir. The browser-automation CLI then drives it over per-target CDP. This script is the single source of truth for how
-#   to start that Chrome.
+#   convention is: one Chrome per user listening on --remote-debugging-port with
+#   a dedicated user-data-dir. The browser-automation CLI then drives it over
+#   per-target CDP. This script is the single source of truth for how to start
+#   that Chrome.
+#
+# ONE CHROME PER USER, NOT PER MACHINE:
+#   127.0.0.1 is machine-wide and CDP has no authentication, so a single
+#   hardcoded port means the first macOS account to launch owns it and every
+#   other account's automation silently drives that account's browser. The port
+#   is therefore derived from the uid — see `cdpPort()` in src/core/cdp.ts,
+#   which computes the same number and passes it here with --port.
 set -euo pipefail
 
-PORT=9223
+# --- port ------------------------------------------------------------------
+first_human_uid() { [ "$(uname -s)" = "Darwin" ] && echo 501 || echo 1000; }
+derive_port() {
+  local uid base first offset
+  uid="$(id -u)"; base=9223; first="$(first_human_uid)"
+  offset=$(( uid - first ))
+  if [ "$offset" -lt 0 ] || [ "$offset" -gt 499 ]; then
+    echo $(( base + 500 + (uid % 500) ))
+  else
+    echo $(( base + offset ))
+  fi
+}
+
+PORT=""
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --port) PORT="${2:-}"; shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+PORT="${PORT:-${BROWSER_AUTOMATION_PORT:-$(derive_port)}}"
+
 PROFILE="${BROWSER_AUTOMATION_PROFILE:-$HOME/Library/Application Support/Google/Chrome/browser-automation}"
-LOG="${BROWSER_AUTOMATION_LOG:-/tmp/chrome-9223.log}"
+# Under the caller's OWN temp dir: /tmp is shared and sticky, so with a
+# machine-global name the second user cannot write the first user's log.
+LOG="${BROWSER_AUTOMATION_LOG:-${TMPDIR:-/tmp}/chrome-${PORT}.log}"
 
 is_up() {
   curl -fs -o /dev/null "http://localhost:${PORT}/json/version"
+}
+
+# Is the browser answering on this port OURS?
+#
+# Note the question is "is it mine", not "whose is it". `lsof` tells a
+# non-root user NOTHING about another user's socket — it prints an empty
+# result and exits 0, which reads exactly like a free port. Measured
+# 2026-08-08: as the second account, `lsof -iTCP:9223 -sTCP:LISTEN` returned
+# nothing while the first account's Chrome was plainly listening. You can
+# always see your OWN processes, so ask that instead.
+port_is_ours() {
+  pgrep -u "$(id -u)" -f -- "--remote-debugging-port=${PORT}" >/dev/null 2>&1
 }
 
 if [ "${1:-}" = "--status" ]; then
@@ -27,6 +73,17 @@ if [ "${1:-}" = "--status" ]; then
     exit 0
   fi
   echo "Chrome CDP on :${PORT} is NOT running"
+  exit 1
+fi
+
+# Something is answering on our port and it is not ours. Refuse loudly rather
+# than drive it: "already running" here used to mean "another macOS account's
+# browser, and you will never be told".
+if is_up && ! port_is_ours; then
+  echo "Error: something else on this Mac is already serving CDP on port ${PORT}," >&2
+  echo "       and it is not a Chrome this account started. Driving it would act in" >&2
+  echo "       ANOTHER user's browser — quit Chrome in that account, or set" >&2
+  echo "       BROWSER_AUTOMATION_PORT to a free port for this one." >&2
   exit 1
 fi
 

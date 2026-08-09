@@ -14,7 +14,8 @@ file under `~/.browser-automation/sessions/`.
 
 ## The model — read this first
 
-- **One shared headed Chrome** on `--remote-debugging-port=9223` with a
+- **One shared headed Chrome per USER** on a uid-derived
+  `--remote-debugging-port` (`9223` for the first account on the machine) with a
   persistent profile (`browser-automation`). Cookies, logins, and **browser
   extensions (password managers, etc.) all persist** across runs and across
   Claude Code restarts. The user can watch and complete interactive auth in the
@@ -55,7 +56,7 @@ file under `~/.browser-automation/sessions/`.
 
 ```bash
 npm install -g @generativereality/browser-automation
-browser-automation launch     # start the canonical Chrome on :9223 (idempotent)
+browser-automation launch     # start this user's Chrome (idempotent)
 browser-automation doctor     # verify Node, Chrome, targets, sessions
 ```
 
@@ -233,7 +234,7 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
   once a known element should be present.
 - **`launch` is macOS/Linux only** (resolves the Chrome binary per-OS). On other
-  setups, start Chrome manually with `--remote-debugging-port=9223
+  setups, start Chrome manually with `--remote-debugging-port=<doctor's port>
   --user-data-dir="<profile>"`.
 
 ## Network insights — find the API behind a page
@@ -297,7 +298,10 @@ working around it forever**:
 
 ## Troubleshooting
 
-- **`No CDP browser on http://localhost:9223`** → `browser-automation launch`.
+- **`No CDP browser on http://localhost:<port>`** → `browser-automation launch`.
+  If it says the port is held by ANOTHER user, that is not your Chrome and
+  driving it would act in their session — quit Chrome in that account, or set
+  `BROWSER_AUTOMATION_PORT`.
 - **`command not found: browser-automation`** → `npm install -g @generativereality/browser-automation`.
 - **Chrome was restarted** → nothing to do; the next `goto` recreates the
   session's tab automatically (sessions self-heal; `list` shows `stale`).
