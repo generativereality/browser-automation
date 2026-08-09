@@ -25,7 +25,7 @@
 // upgrade does not orphan a Chrome that is already running — and everybody else
 // gets 9224, 9225, and so on.
 const BASE_PORT = 9223
-/// The uid the platform hands its first human account. Everything below it is
+// The uid the platform hands its first human account. Everything below it is
 /// a system account, which will not be running a headed Chrome.
 const FIRST_HUMAN_UID = process.platform === 'darwin' ? 501 : 1000
 
@@ -35,9 +35,11 @@ const FIRST_HUMAN_UID = process.platform === 'darwin' ? 501 : 1000
  * `BROWSER_AUTOMATION_PORT` overrides it, for the cases a formula cannot know
  * about: a shared CI box, a container, or somebody who simply wants two.
  *
- * **`scripts/launch-chrome.sh` computes the same number** and must be kept in
- * step — `launch` passes it explicitly, so the shell fallback only matters when
- * a person runs that script by hand.
+ * **This is the only place the number is decided.** It was copied into
+ * `scripts/launch-chrome.sh` within an hour of being written, each copy with a
+ * comment promising to keep it in step — which is the tell, not the plan. The
+ * script asks `browser-automation port` instead, and the `port` command exists
+ * for exactly that.
  */
 export function cdpPort(): number {
   const explicit = Number(process.env.BROWSER_AUTOMATION_PORT)
