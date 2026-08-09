@@ -1,0 +1,76 @@
+name: Release
+
+# Publishes to npm via OIDC trusted publishing — no NPM_TOKEN, no secret of any
+# kind.
+#
+# Why this exists rather than `npm publish` from a laptop: the credential in a
+# developer's `~/.npmrc` is a GRANULAR token, and a granular token is scoped to
+# named packages. Publishing this one from a machine whose token was minted for
+# a different package fails with a **404 on the PUT** — not a 403, not "you are
+# not logged in" — while `npm whoami` still answers with the right username and
+# `npm owner ls` still lists you, because both of those are unscoped reads.
+# Measured 2026-08-09; `npm profile get` 403ing is the tell that the token is
+# granular and narrow.
+#
+# It is also where npm is going regardless: tokens that bypass 2FA are being
+# restricted for account changes (Aug 2026) and for direct publishing
+# (Jan 2027). Trusted publishing is unaffected by both, and yields provenance
+# attestations that token publishing never did.
+#
+# ⚠️ **npm trusts this workflow by FILENAME.** Package → Settings → Trusted
+# Publisher names `generativereality/browser-automation` + `release.yml`, so
+# renaming this file silently breaks releases until npm is updated to match.
+#
+# Trigger: push a version tag. The tag must match `package.json`, which the job
+# verifies before publishing — a mismatch is the classic way to ship a tarball
+# that disagrees with its git tag.
+#
+# Note for whoever pushes the tag: `.github/workflows/*` cannot be pushed over
+# an HTTPS remote without the `workflow` OAuth scope. This repo's origin is SSH,
+# which sidesteps it.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for OIDC; without it npm sees no provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: "npm"
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1; setup-node still ships older.
+      - name: Ensure npm supports trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - run: npm ci
+
+      - name: Verify the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          echo "tag=$TAG package.json=$PKG"
+          [ "$TAG" = "$PKG" ] || { echo "::error::tag $TAG != package.json $PKG"; exit 1; }
+
+      # typecheck + the one-place-decides-the-port guard + build. `prepack` runs
+      # the build again at publish time; this is here so a failure is reported
+      # against the check rather than buried in the publish step.
+      - name: Check
+        run: npm run check
+
+      - name: Publish to npm
+        run: npm publish
