@@ -166,9 +166,11 @@ same one-action-per-snapshot rule as Playwright refs.
   not one per machine: `127.0.0.1` is machine-wide and CDP has no
   authentication, so a single shared port means the first account to launch owns
   it and every other account's automation silently drives *that* account's
-  browser — same-looking page loads, in somebody else's signed-in session. The
-  first human account on the platform keeps `9223`; the next gets `9224`, and so
-  on. `doctor` prints yours and warns if another user holds it.
+  browser — same-looking page loads, in somebody else's signed-in session.
+  **Run `browser-automation port` for yours** — the number is derived from your
+  uid, and this file deliberately does not restate the formula: prose that
+  repeats a rule is a copy of it, and goes stale the same way code does.
+  `doctor` prints it too, and warns if another user holds it.
 - `BROWSER_AUTOMATION_CDP` — full CDP host, overriding the port entirely.
 - `BROWSER_AUTOMATION_PROFILE` — Chrome profile dir for `launch`.
 - `BAC_SESSION` — default session name for page commands.
