@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { cdpHost, cdpPort, listTargets } from '../core/cdp.js'
 import { listSessions } from '../core/session.js'
+import { probeRenderer, explainRendererFailure, browserPid, rendezvousRegistered, chromeLogPath } from '../core/renderer-health.js'
 
 const PROFILE = process.env.BROWSER_AUTOMATION_PROFILE
   || `${homedir()}/Library/Application Support/Google/Chrome/browser-automation`
@@ -82,8 +83,51 @@ export const doctorCommand = define({
       bad('Could not enumerate targets')
     }
 
-    // Sessions
+    // **Renderer capacity.** Everything above this line describes the browser
+    // PROCESS, and the browser process is not what breaks. A Chrome that has
+    // lost the ability to launch renderers passes every check above — reachable,
+    // targets listed, version reported — and fails every attempt to open a tab
+    // or navigate cross-origin, with errors (`Page.enable timed out`,
+    // `net::ERR_ABORTED`) that read as the remote site's doing. A green doctor
+    // on a browser in that state is worse than no doctor: it actively points
+    // the investigation at the site. So measure it, with the round-trip that is
+    // the only thing that tells the two apart.
+    const health = await probeRenderer().catch((e) => ({ ok: false, ms: 0, pageTargets: 0, reason: String(e?.message ?? e) }))
+    if (health.ok) {
+      ok(`Renderer capacity: a new tab got a live renderer in ${health.ms}ms`)
+      const pid = browserPid()
+      const rendezvous = rendezvousRegistered(pid)
+      if (rendezvous === false) {
+        // Healthy probe, missing bootstrap name: not a state we have seen, but
+        // if it happens it is the wedge arriving, so say so rather than wait.
+        consola.log(`    ⚠ but the Mach rendezvous service for pid ${pid} is NOT registered —`)
+        consola.log(`      new renderers are expected to start failing. Restart Chrome soon:`)
+        consola.log(`      browser-automation launch --restart`)
+      }
+    } else {
+      bad(`Renderer capacity: FAILED`)
+      for (const line of explainRendererFailure(health).split('\n')) consola.log(`    ${line}`)
+      consola.log(`    Chrome's own log: ${chromeLogPath()}`)
+    }
+
+    // Sessions. Bookmarks are never cleaned up on their own, so on a machine
+    // that has run many parallel sessions for months this list runs to
+    // hundreds — long enough to scroll the actual diagnosis off the screen,
+    // which is the one thing this command exists to show. Summarise, and name
+    // the broom.
     const sessions = listSessions()
-    consola.log(`  • ${sessions.length} known session(s): ${sessions.map((s) => s.name).join(', ') || '(none)'}`)
+    let live = 0
+    try {
+      const liveIds = new Set((await listTargets()).map((t) => t.id))
+      live = sessions.filter((s) => liveIds.has(s.targetId)).length
+    } catch { /* leave live at 0 */ }
+    const stale = sessions.length - live
+    consola.log(`  • ${sessions.length} known session(s): ${live} live, ${stale} stale`)
+    if (sessions.length) {
+      const names = sessions.map((s) => s.name)
+      const shown = names.slice(0, 12).join(', ')
+      consola.log(`    ${shown}${names.length > 12 ? `, … (+${names.length - 12} more — \`browser-automation list\`)` : ''}`)
+    }
+    if (stale > 20) consola.log(`    ${stale} stale bookmarks point at tabs that no longer exist — \`browser-automation gc --dry\` to review.`)
   },
 })

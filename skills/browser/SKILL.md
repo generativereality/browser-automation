@@ -72,7 +72,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Need | Command |
 |---|---|
 | Start/refresh the Chrome | `browser-automation launch` |
-| Diagnose setup | `browser-automation doctor` |
+| Diagnose setup (incl. renderer capacity) | `browser-automation doctor` |
 | List sessions + every open tab (id, title, url) | `browser-automation list` |
 | Open a background tab | `browser-automation new -s work [url]` |
 | Navigate (session tab created if needed) | `browser-automation goto -s work https://example.com` |
@@ -89,6 +89,8 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Drop file(s) onto a drag-and-drop zone | `browser-automation drop -m app e7 ~/Desktop/clip.mp4` (add `--js` for a synthetic drop) |
 | Inspect network (find the API, headers, bodies) | `browser-automation network -m bank --reload --filter api --headers --body` |
 | Screenshot a tab | `browser-automation screenshot -m op.fi --full -o shot.png` |
+| Prune stale session bookmarks + dead tabs | `browser-automation gc --dry` (then without `--dry`) |
+| Restart Chrome (only fix for the renderer wedge — closes ALL tabs) | `browser-automation launch --restart` |
 | Forget a session (tab stays open) | `browser-automation close -s work` |
 | Forget **and** close the browser tab | `browser-automation close -s work --tab` |
 
@@ -230,6 +232,81 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   isn't snapshot-interactive. After the drop, `read`/`screenshot`/`network` to
   confirm processing started, then grab the result (often a download endpoint you
   can pull with `download --url`).
+- **"The site is blocking us" — when it is really Chrome that cannot make renderers.**
+  A browser process can permanently lose the ability to launch **renderer processes** while
+  looking perfectly healthy. Every tab that already exists keeps working, so nothing seems wrong
+  until you open a tab or navigate somewhere new, and then the errors read as the remote site's
+  doing. Diagnosed 2026-08-22; it cost an hour of blaming ferry-operator bot protection.
+
+  How it shows up:
+  - `browser-automation new` + `goto` → `CDP Page.enable timed out after 30000ms`, **even for
+    `example.com`**.
+  - **Cross-origin** navigation of an existing, working tab → `navigate failed: net::ERR_ABORTED`.
+    Site isolation puts a new origin in a new renderer — the exact thing Chrome can no longer do.
+  - **Same-origin** navigation on that same tab keeps working perfectly (Skyscanner → Skyscanner
+    with new query params was fine throughout). That asymmetry is what makes it masquerade as
+    "only site X blocks us": the tab you were already using still behaves.
+  - A target created at the browser level (`PUT /json/new?<url>`) appears in `/json/list` with the
+    right URL but an **empty title forever**; every `Runtime.evaluate` against it times out.
+    `Page.captureScreenshot` returns `Internal error`. The target shell exists; the renderer does not.
+
+  **The mechanism** (macOS, from Chrome's own log at `$TMPDIR/chrome-<port>.log`):
+  ```
+  ERROR:base/apple/mach_port_rendezvous_mac.cc:256]
+    bootstrap_look_up com.google.Chrome.MachPortRendezvousServer.<pid>: (ipc/send) invalid destination port
+  ERROR:base/memory/shared_memory_switch.cc:261]
+    No rendezvous client, terminating process (parent died?)
+  ```
+  A Chrome child process gets its shared-memory handles by looking up a Mach bootstrap service the
+  browser registers **once, at startup**, named `com.google.Chrome.MachPortRendezvousServer.<browser-pid>`.
+  That registration had vanished from the user's launchd namespace — confirmed absent via
+  `launchctl print gui/$UID | grep MachPortRendezvousServer.<pid>`, while two healthy Chromes on the
+  same machine were both listed. From then on **every renderer Chrome launches kills itself within
+  milliseconds**, which is why none ever appears in `ps` and why the browser only reports
+  `Render process gone.` (The trigger looked like a Chrome auto-update churning underneath the
+  running process: the binary on disk had moved to 151.0.7922.170 while the live browser was still
+  .138, and `GoogleUpdater` was FATAL-ing on its own `bootstrap_check_in` with error 141.)
+
+  **It is NOT about how many tabs are open.** That was the first theory and it is wrong: a freshly
+  launched Chrome on the same machine was driven to **421 page targets / 435 live renderer
+  processes, every one responsive**, and a 256-fd `ulimit` made no difference either (205 renderers,
+  all fine). The broken browser had 66 tabs. The count was a coincidence — so do not treat a big
+  tab count as evidence of this, and do not expect closing tabs to fix it.
+
+  **Diagnose it:**
+  ```bash
+  browser-automation doctor        # measures renderer capacity, not just reachability
+  ```
+  `doctor` now creates a throwaway tab, makes its renderer evaluate `1+1`, and closes it — the one
+  round-trip that separates a wedged browser from a slow network or a hostile site. On failure it
+  names the root cause (including the missing bootstrap service and the pid) and points at Chrome's
+  log. On a healthy browser it reports e.g. `✓ Renderer capacity: a new tab got a live renderer in
+  73ms`. `goto` and `new` run the same probe automatically **on the error path only**, so a bare
+  `Page.enable timed out` now arrives with the diagnosis attached instead of sending you to the
+  site's bot-protection docs.
+
+  **Recovery — only a Chrome restart clears it.** The bootstrap name is registered at startup and
+  never re-registered, so nothing short of a new browser process helps. Closing tabs does not, and
+  plain `launch` will not either (idempotent by design — it sees a live browser and exits happy):
+  ```bash
+  browser-automation launch --restart    # SIGTERM (profile flushes cleanly), wait, relaunch
+  ```
+  It reports how many tabs it is about to close. **Those tabs belong to every parallel Claude Code
+  session sharing this Chrome — ask Fred first, never restart unilaterally.**
+
+  **Housekeeping is a different problem** — `browser-automation gc` prunes stale session bookmarks
+  (they are never cleaned up otherwise; this machine had accumulated 234, only 5 of them live) and
+  closes tabs whose renderer does not answer. Use `--dry` first. It is genuinely useful, but it is
+  **not** a fix for the wedge above, and it never closes a working tab unless you pass `--orphans`
+  — tabs get addressed by `-m` and opened by hand, so "no session claims it" is not evidence that
+  nobody wants it.
+
+  **The false lead to resist:** a bare `curl` to a suspicious site may genuinely return a bot wall
+  (vikingline.fi serves an Imperva "Pardon Our Interruption" page, HTTP 200), which feels like
+  confirmation. It confirms nothing about the browser path — the persistent, cookie-bearing profile
+  is a completely different client. Check the browser first: if `doctor` says renderer capacity is
+  fine and a boring cross-origin URL loads, *then* start suspecting the site.
+
 - **Page still loading.** `goto` waits for the load event, but SPAs render after.
   If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
   once a known element should be present.

@@ -5,6 +5,16 @@
 #   ./scripts/launch-chrome.sh              # launch if not already running
 #   ./scripts/launch-chrome.sh --status     # exit 0 if a CDP browser is listening, else 1
 #   ./scripts/launch-chrome.sh --port 9224  # explicit port (the CLI always passes this)
+#   ./scripts/launch-chrome.sh --restart    # quit a running Chrome first, then launch
+#
+# Why --restart exists:
+#   A browser process can permanently lose the ability to launch renderers (see
+#   src/core/renderer-health.ts for the mechanism). Every existing tab keeps
+#   working, so the browser looks fine, but no new tab or cross-origin
+#   navigation ever will again. Restarting is the ONLY recovery — and plain
+#   `launch` cannot do it, because it is idempotent by design and correctly
+#   reports "already running". Without an explicit flag the only way out was to
+#   go and kill Chrome by hand, which is how a diagnosis ends up unactionable.
 #
 # Why this script exists:
 #   The `browser-automation` skill prefers to drive a real, persistent Chrome
@@ -36,10 +46,12 @@ ask_cli_for_port() {
 }
 
 PORT=""
+RESTART=0
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --port) PORT="${2:-}"; shift 2 ;;
+    --restart) RESTART=1; shift ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
@@ -93,9 +105,39 @@ if is_up && ! port_is_ours; then
   exit 1
 fi
 
+# Restart: quit the Chrome we own, wait for the port to go quiet, fall through
+# to the normal launch. Deliberately SIGTERM, not SIGKILL — Chrome flushes its
+# profile (cookies, extension state, session) on a clean quit, and that profile
+# is the whole reason this browser is long-lived. Only escalate if it will not
+# go, and say so when it happens.
+if [ "$RESTART" = "1" ] && is_up; then
+  if ! port_is_ours; then
+    echo "Error: refusing to restart a Chrome this account did not start." >&2
+    exit 1
+  fi
+  TABS="$(curl -fs "http://localhost:${PORT}/json/list" 2>/dev/null | grep -c '"type": "page"' || true)"
+  echo "Restarting Chrome on :${PORT} — closing ${TABS:-?} open tab(s)."
+  pkill -u "$(id -u)" -f -- "--remote-debugging-port=${PORT}" 2>/dev/null || true
+  for _ in $(seq 1 40); do
+    is_up || break
+    sleep 0.25
+  done
+  if is_up; then
+    echo "Chrome did not quit on SIGTERM after 10s; sending SIGKILL." >&2
+    pkill -9 -u "$(id -u)" -f -- "--remote-debugging-port=${PORT}" 2>/dev/null || true
+    sleep 2
+  fi
+  # Chrome unregisters its bootstrap names and releases the port on the way out;
+  # relaunching before that finishes produces a second browser that cannot serve
+  # CDP. A short settle beats a confusing race.
+  sleep 1
+fi
+
 if is_up; then
   echo "Already running on :${PORT} — nothing to do."
   echo "Drive it with: browser-automation goto -s <session> <url>"
+  echo "(To force a fresh browser process — the only fix for a Chrome that can no"
+  echo " longer launch renderers — use: browser-automation launch --restart)"
   exit 0
 fi
 

@@ -18,6 +18,7 @@ import { closeCommand } from './close.js'
 import { bindCommand } from './bind.js'
 import { launchCommand } from './launch.js'
 import { doctorCommand } from './doctor.js'
+import { gcCommand } from './gc.js'
 import { portCommand } from './port.js'
 
 const defaultCommand = define({
@@ -51,6 +52,8 @@ const subCommands = new Map<string, Command<any>>([
   ['bind', bindCommand],
   ['launch', launchCommand],
   ['doctor', doctorCommand],
+  ['gc', gcCommand],
+  ['prune', gcCommand],
   ['port', portCommand],
 ])
 

@@ -36,7 +36,7 @@ long-lived process**:
 ```bash
 npm install -g @generativereality/browser-automation
 browser-automation launch     # start this user's Chrome (idempotent)
-browser-automation doctor     # verify
+browser-automation doctor     # verify (incl. renderer capacity)
 ```
 
 Claude Code skill (so the agent knows how to use it):
@@ -93,7 +93,8 @@ browser-automation bind -s bank -m nordnet    # …or adopt it into a session
 | Command | What it does |
 |---|---|
 | `launch [--status]` | Start this user's headed Chrome (idempotent) |
-| `doctor` | Diagnose Node, Chrome, targets, sessions |
+| `doctor` | Diagnose Node, Chrome, targets, sessions — and **renderer capacity** (a browser that can no longer launch renderers passes every other check) |
+| `gc` | Prune stale session bookmarks and dead tabs (`--dry` to preview, `--orphans` to also close unclaimed live tabs) |
 | `list` | List sessions and every open tab (id, title, url) |
 | `new -s <s> [url]` | Open a background tab for a session |
 | `goto (-s\|-m\|-t) <url>` | Navigate (session tab created if needed) |
