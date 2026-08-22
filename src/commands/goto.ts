@@ -5,6 +5,7 @@ import { normalizeUrl } from '../core/target.js'
 import { resolveOrCreateTargetId } from '../core/resolve.js'
 import { targetArgs, targetOpts } from '../core/args.js'
 import { navigate } from '../core/cdp.js'
+import { withRendererDiagnosis } from '../core/renderer-health.js'
 
 export const gotoCommand = define({
   name: 'goto',
@@ -19,8 +20,10 @@ export const gotoCommand = define({
     const target = normalizeUrl(url)
     const opts = targetOpts(ctx.values)
 
-    const { targetId, created } = await resolveOrCreateTargetId(opts)
-    await navigate(targetId, target)
+    // Both halves are wrapped: creating the session's tab is itself a renderer
+    // launch, and it fails the same silent way a cross-origin navigation does.
+    const { targetId, created } = await withRendererDiagnosis(() => resolveOrCreateTargetId(opts))
+    await withRendererDiagnosis(() => navigate(targetId, target))
 
     // Persist the binding only in pure session mode (no explicit -m/-t).
     if (!opts.match && !opts.target) {
