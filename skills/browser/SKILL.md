@@ -136,12 +136,47 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
 
 - **Refs go stale after any DOM change**, not just navigation. Snapshot → use
   those refs for one action → re-snapshot. "ref not found" means re-snapshot.
-- **`isTrusted` / synthetic events.** Clicks and fills are JS-dispatched, so a
-  small number of hard anti-bot or payment widgets that demand trusted events
-  may ignore them. For fills, pass `--native` to drive character insertion
-  through CDP `Input.insertText` instead — that fires real (trusted)
-  `beforeinput`/`input` events. For clicks, escalate to a foregrounded
-  native-input path or have the user do that one step manually.
+- **`isTrusted` / synthetic events.** Clicks and fills are JS-dispatched by
+  default, so widgets that demand trusted events ignore them. **For clicks, pass
+  `--trusted`** — it dispatches a real CDP `Input.dispatchMouseEvent`, brings the
+  tab to front, waits for it to be focused+visible (CDP input no-ops on a
+  backgrounded tab) and waits for the element to be actionable (stable position +
+  unoccluded hit-test) before pressing. For fills, pass `--native` to drive
+  character insertion through CDP `Input.insertText`, which fires real
+  `beforeinput`/`input` events.
+  **Reach for `--trusted` the moment a click "succeeds" but nothing happens** —
+  the CLI prints `✔ clicked e7` on a dispatched event regardless of whether the
+  widget reacted, so a silent no-op is the signature, not an error. Canonical
+  cases: LinkedIn artdeco dropdown items, Radix dropdowns/popovers, cmdk
+  comboboxes, and **framework-state form widgets whose inputs are `readonly` with
+  no `name`** (Viking Line's booking selectors — the visible fields are display
+  shells; the real state lives in the framework, so `fill` and DOM value-setting
+  do nothing at all).
+  **Do NOT hand-roll a raw-CDP trusted click.** Burned 2026-08-22: wrote a
+  bespoke `Input.dispatchMouseEvent` helper for exactly this, and it clicked
+  stale coordinates (the panel had animated in) — `--trusted` already solves that
+  with the actionability wait. Check `browser-automation click --help` before
+  building anything.
+  **A form can swallow a dispatched click and submit itself the wrong way.**
+  npmjs.com's package-settings forms are the case (2026-08-22): a default click
+  on the submit button did not reach the framework's handler, so the browser fell
+  through to a plain native POST and the tab was replaced by a raw
+  `{"message":"Not Found"}` — no error from the CLI, and nothing saved. It looks
+  like the server rejected your data; it did not. `--trusted` submitted the same
+  form correctly. On any settings page, verify by reloading and re-reading the
+  saved state rather than trusting a click that "worked".
+- **WebAuthn / security keys need a genuinely focused, visible tab, and you
+  cannot supply the touch.** `navigator.credentials.get()` refuses outright when
+  `document.hasFocus()` is false or `visibilityState` is `hidden` — which is the
+  normal state while you work in the terminal, since `--trusted` only fronts the
+  tab for the instant of the click. The prompt then never opens and the page just
+  sits there, so a 2FA step can look like it is waiting for the user when the
+  browser has already declined to ask. Measured 2026-08-22 on npm's
+  `Use security key` challenge: the form POST returned **200** and the challenge
+  was live, but it could only be satisfied once the user brought that Chrome
+  window to the front themselves. Check with
+  `eval '({f:document.hasFocus(),v:document.visibilityState})'` before concluding
+  anything, and hand hardware-2FA steps to the user with the window frontmost.
 - **Controlled-form state stickiness.** Form libraries that subscribe to React's
   internal value-setter (React Hook Form, Final Form, Formik with a `Controller`,
   Blocket/finn.no's `recommerce` editor) sometimes ignore the synthetic `input`
