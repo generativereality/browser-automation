@@ -162,6 +162,16 @@ fi
 
 mkdir -p "$(dirname "$PROFILE")"
 
+# Keep one generation of the previous log. Chrome's stdout is the only place
+# the reason for a renderer failure is ever written, and truncating it on
+# relaunch destroys the evidence at exactly the moment somebody restarted
+# BECAUSE of that failure. (Done during this fix, to this author's own
+# evidence.) One generation, not a rotation scheme: the interesting log is
+# always the one from the browser that just misbehaved.
+if [ -s "$LOG" ]; then
+  mv -f "$LOG" "${LOG}.prev" 2>/dev/null || true
+fi
+
 nohup "$CHROME" \
   --remote-debugging-port="$PORT" \
   --user-data-dir="$PROFILE" \

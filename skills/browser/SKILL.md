@@ -250,7 +250,9 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
     right URL but an **empty title forever**; every `Runtime.evaluate` against it times out.
     `Page.captureScreenshot` returns `Internal error`. The target shell exists; the renderer does not.
 
-  **The mechanism** (macOS, from Chrome's own log at `$TMPDIR/chrome-<port>.log`):
+  **The mechanism** (macOS, from Chrome's own log at `$TMPDIR/chrome-<port>.log` — `launch --restart`
+  keeps the previous browser's log as `chrome-<port>.log.prev`, which is the one you want after a
+  restart):
   ```
   ERROR:base/apple/mach_port_rendezvous_mac.cc:256]
     bootstrap_look_up com.google.Chrome.MachPortRendezvousServer.<pid>: (ipc/send) invalid destination port
@@ -263,9 +265,13 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   `launchctl print gui/$UID | grep MachPortRendezvousServer.<pid>`, while two healthy Chromes on the
   same machine were both listed. From then on **every renderer Chrome launches kills itself within
   milliseconds**, which is why none ever appears in `ps` and why the browser only reports
-  `Render process gone.` (The trigger looked like a Chrome auto-update churning underneath the
-  running process: the binary on disk had moved to 151.0.7922.170 while the live browser was still
-  .138, and `GoogleUpdater` was FATAL-ing on its own `bootstrap_check_in` with error 141.)
+  `Render process gone.` **What made the name vanish is not established.** Two things
+  correlated and neither is proven: the binary on disk had moved to 151.0.7922.170 while the live
+  browser was still running .138, and `GoogleUpdater` was FATAL-ing on its own `bootstrap_check_in`
+  with error 141. But the first renderer failure (18:53) *preceded* the first updater FATAL (19:42)
+  by ~50 minutes, so the update churn is at best a fellow symptom of a sick launchd bootstrap
+  namespace, not the cause. Treat the trigger as unknown; the diagnosis and the recovery do not
+  depend on it.
 
   **It is NOT about how many tabs are open.** That was the first theory and it is wrong: a freshly
   launched Chrome on the same machine was driven to **421 page targets / 435 live renderer
