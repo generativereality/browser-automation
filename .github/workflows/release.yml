@@ -63,9 +63,24 @@ jobs:
       # that the run log shows no OIDC or provenance lines at all: npm never
       # tried, because it thought it already had a credential.
       #
-      # Without registry-url there is no .npmrc, npm falls back to the default
-      # registry, sees no token, and does the OIDC exchange. (Measured on the
-      # workflow's first ever run, 2026-08-22 — v0.4.8 failed exactly this way.)
+      # Without registry-url there is no .npmrc and npm falls back to the
+      # default registry with no credential.
+      #
+      # ⚠️ **That alone did not make the publish work**, and the file should say
+      # so rather than imply a fix. Measured over the workflow's first two runs
+      # (2026-08-22, v0.4.8):
+      #
+      #   with registry-url     npm error code E404      (published with the placeholder)
+      #   without registry-url  npm error code ENEEDAUTH (no credential at all)
+      #
+      # Neither run shows a single OIDC or provenance line, so npm never
+      # attempted the exchange in either configuration. Removing the placeholder
+      # was necessary — a bogus credential would have pre-empted OIDC — but the
+      # remaining blocker is on npm's side, not in this file: the package needs
+      # a Trusted Publisher configured at npmjs.com naming
+      # `generativereality/browser-automation` + `release.yml`. Until that
+      # exists there is nothing for the exchange to authenticate against, and
+      # ENEEDAUTH is the honest symptom of it.
       - uses: actions/setup-node@v4
         with:
           node-version: "22.x"
