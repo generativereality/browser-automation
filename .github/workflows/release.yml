@@ -44,11 +44,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # NOTE: deliberately NO `registry-url`.
+      #
+      # Setting it makes setup-node write an .npmrc containing
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`. With no
+      # NODE_AUTH_TOKEN secret — which is the whole point of trusted publishing
+      # — that expands to setup-node's literal placeholder, and npm then
+      # publishes with a credential of `XXXXX-XXXXX-XXXXX-XXXXX` instead of
+      # performing the OIDC exchange. The registry rejects it as
+      #
+      #   npm error code E404
+      #   npm error 404 Not Found - PUT .../@generativereality%2fbrowser-automation
+      #
+      # which reads as "the package does not exist" and sends you to check
+      # names, scopes and permissions. It is an auth failure wearing a 404, and
+      # it is the same misleading shape the file header already warns about for
+      # granular tokens — arrived at here by the opposite route. The tell is
+      # that the run log shows no OIDC or provenance lines at all: npm never
+      # tried, because it thought it already had a credential.
+      #
+      # Without registry-url there is no .npmrc, npm falls back to the default
+      # registry, sees no token, and does the OIDC exchange. (Measured on the
+      # workflow's first ever run, 2026-08-22 — v0.4.8 failed exactly this way.)
       - uses: actions/setup-node@v4
         with:
           node-version: "22.x"
           cache: "npm"
-          registry-url: https://registry.npmjs.org
 
       # Trusted publishing needs npm >= 11.5.1; setup-node still ships older.
       - name: Ensure npm supports trusted publishing
