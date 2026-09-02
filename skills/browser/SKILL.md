@@ -354,6 +354,23 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   is a completely different client. Check the browser first: if `doctor` says renderer capacity is
   fine and a boring cross-origin URL loads, *then* start suspecting the site.
 
+- **A backgrounded tab may never paint at all — and `read`/`snapshot` will not tell you.** Distinct
+  from "still loading": `document.readyState` reaches `complete`, but the SPA never renders, so
+  `read` returns a stale shell (e.g. a bare "Loading") and `snapshot` lists none of the real
+  controls. The trap is that this looks exactly like *the page does not have that element*, and you
+  will go hunting for a different selector or conclude the flow changed. Measured 2026-09-02 on
+  Google's `accounts.google.com/v3/signin/challenge/pwd`: `readyState: "complete"`,
+  `body.innerText.length: 202` frozen on the previous step's text, and the password field present in
+  the DOM but `offsetParent === null` for as long as the tab stayed backgrounded.
+  **Diagnose** before changing your selector:
+  ```bash
+  browser-automation eval -s x '({ready:document.readyState,vis:document.visibilityState,len:document.body.innerText.length})'
+  ```
+  `visibilityState: "hidden"` with a stuck `len` is this, not a selector problem.
+  **Fix:** front the tab. There is no `activate` command — a `click --trusted` on any harmless
+  element (a wrapper `div` from the snapshot works; avoid submit buttons and links) brings the tab
+  to front and waits for it to be visible, and the page paints immediately. Same root cause as the
+  WebAuthn note above, different symptom: that one refuses, this one silently never renders.
 - **Page still loading.** `goto` waits for the load event, but SPAs render after.
   If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
   once a known element should be present.
