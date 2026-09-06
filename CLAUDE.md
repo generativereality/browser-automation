@@ -26,7 +26,7 @@ gap-fills are patches: 0.4.1, 0.4.2, …)
 Default loop while iterating:
 
 1. Make the change in `src/`.
-2. `npm run typecheck && npm run build`, then validate against the running Chrome
+2. `npm run check` (typecheck, port guard, build, `npm test`), then validate against the running Chrome
    by running **`node dist/index.js …`** from the repo. **Do NOT `npm link`** — it
    hijacks the machine-global `browser-automation` bin, so parallel sessions (and
    the user's main session) would run your WIP clone instead of the release. Test
@@ -54,6 +54,10 @@ bundle a fix into a feature release.
   `grep`s out of release sequences, or append `|| true`.
 - `data:` URLs and `about:`/`blob:` don't take a `https://` prefix — see
   `normalizeUrl` in `src/core/target.ts`.
+- gunshi's tokenizer treats an argv element that merely *contains* `--` as an
+  option. `src/core/argv.ts` pre-parses argv POSIX-style and hands gunshi a
+  canonical form instead; never let raw user text reach gunshi directly.
+  `npm test` (black-box, against `dist/`) guards this.
 
 ## Key files
 
@@ -61,6 +65,7 @@ bundle a fix into a feature release.
 - `src/commands/*.ts` — one file per subcommand; registered in `src/commands/index.ts`.
 - `src/core/cdp.ts` — per-target CDP: connect/eval/navigate/screenshot, `evaluateUntil` auto-wait.
 - `src/core/dom.ts` — injected snapshot/click/fill/read JS (pierces shadow DOM + same-origin iframes).
+- `src/core/argv.ts` — POSIX pre-parser in front of gunshi (positionals are never re-split; `--` ends options).
 - `src/core/resolve.ts` + `args.ts` — tab selection (`-s`/`-m`/`-t`, prefix-matched targetIds).
 - `src/core/session.ts` — per-session JSON under `~/.browser-automation/sessions/`.
 - `src/core/{download,network}.ts` — download capture + network inspection.
