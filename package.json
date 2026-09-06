@@ -16,7 +16,8 @@
     "dev": "bun run ./src/index.ts",
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && bash scripts/check-one-port.sh && npm run build",
+    "check": "npm run typecheck && bash scripts/check-one-port.sh && npm run build && npm test",
+    "test": "node --test \"test/**/*.test.mjs\"",
     "release": "bumpp && npm publish",
     "sync-plugin": "bash scripts/sync-plugin.sh",
     "prepack": "npm run build"

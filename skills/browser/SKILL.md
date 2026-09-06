@@ -134,6 +134,12 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
 
 ## Gotchas
 
+- **Values may contain `--` freely.** `fill -s work e3 "see the --native flag"`
+  and a whole markdown brief with `---` rules go through as one quoted argv
+  element. Only a value that *begins* with a dash and is option-shaped
+  (`--force`, `-5`) needs the POSIX separator: `fill -s work -- e3 "--force"`.
+  An error naming the element (`'--force' is not an option of 'fill'`)
+  means exactly that — add `--`, do not re-quote.
 - **Refs go stale after any DOM change**, not just navigation. Snapshot → use
   those refs for one action → re-snapshot. "ref not found" means re-snapshot.
 - **`isTrusted` / synthetic events.** Clicks and fills are JS-dispatched by

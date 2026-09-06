@@ -1,5 +1,6 @@
 import { cli, define, type Command } from 'gunshi'
 import pkg from '../../package.json'
+import { canonicalize, restorePositionals, type ArgSpec } from '../core/argv.js'
 import { newCommand } from './new.js'
 import { gotoCommand } from './goto.js'
 import { snapshotCommand } from './snapshot.js'
@@ -57,12 +58,46 @@ const subCommands = new Map<string, Command<any>>([
   ['port', portCommand],
 ])
 
+// The positionals gunshi sees are placeholders (see core/argv.ts). Each
+// command runs with the real values swapped back in. The context is frozen,
+// so it is copied rather than patched.
+function withRealPositionals(cmd: Command<any>, real: readonly string[]): Command<any> {
+  return {
+    ...cmd,
+    async run(ctx) {
+      return cmd.run?.({ ...ctx, positionals: restorePositionals(ctx.positionals, real) })
+    },
+  }
+}
+
 export async function run(): Promise<void> {
-  await cli(process.argv.slice(2), defaultCommand, {
+  let argv = process.argv.slice(2)
+  let commands = subCommands
+
+  // Parse the arguments ourselves, POSIX-style, and hand gunshi a canonical
+  // argv it cannot misread. Its own tokenizer treats an element that merely
+  // CONTAINS `--` as an option, which made any prose mentioning a long flag
+  // (or a markdown `---` rule) unsendable through `fill`.
+  const sub = argv[0]
+  const command = sub === undefined ? undefined : subCommands.get(sub)
+  if (sub !== undefined && command) {
+    const canonical = canonicalize(sub, argv.slice(1), (command.args ?? {}) as Record<string, ArgSpec>)
+    argv = canonical.argv
+    commands = new Map(subCommands)
+    commands.set(sub, withRealPositionals(command, canonical.positionals))
+  }
+
+  await cli(argv, defaultCommand, {
     name: 'browser-automation',
     version: pkg.version,
     description: pkg.description,
-    subCommands,
+    subCommands: commands,
     renderHeader: null,
+    // gunshi prints validation errors (a genuinely missing positional) and
+    // returns normally, which exited 0. A usage error is a failure.
+    renderValidationErrors: async (_ctx, error) => {
+      process.exitCode = 1
+      return error.errors.map((e) => (e instanceof Error ? e.message : String(e))).join('\n')
+    },
   })
 }

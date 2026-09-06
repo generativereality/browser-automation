@@ -122,6 +122,12 @@ same one-action-per-snapshot rule as Playwright refs.
 
 ## Notes & limits
 
+- **Values are plain POSIX argv.** A positional such as `fill`'s value may contain
+  anything — `--force`, a markdown `---` rule, newlines — as long as the shell
+  hands it over as one element (quote it). Only an element that *begins* with a
+  dash and looks like an option (`--force`, `-5`) is read as one; to pass such a
+  value literally, end option parsing with `--`: `fill -t <id> -- e3 "--force"`.
+  An unknown option is an error that names the offending element.
 - Interactions are **JS-dispatched** (`element.click()`, native value setter +
   `input`/`change`), which works on background tabs (native CDP mouse events do
   not reliably reach a non-foreground tab in headed Chrome). Synthetic events are
