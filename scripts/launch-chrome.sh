@@ -133,11 +133,23 @@ if [ "$RESTART" = "1" ] && is_up; then
   sleep 1
 fi
 
+# A held port is the ONLY thing this branch establishes. It is emphatically not
+# a health check: a Chrome that can no longer give a new tab a renderer keeps
+# serving this port, answering /json/version and listing targets, while every
+# goto fails. Only a round-trip through a renderer tells the two apart, and
+# that lives in the CLI (src/core/renderer-health.ts) -- `browser-automation
+# launch` runs it right after this script returns and prints the real verdict.
+#
+# This used to print a standing "use --restart if renderers are broken" hint
+# here. It was correct advice and it did not work: printed on every launch,
+# directly under the words "nothing to do", it read as boilerplate rather than
+# as a diagnosis, and an operator burned many minutes on 25-30s `goto`s in
+# 2026-09 without it registering. Advice that is always on screen carries no
+# information. The verdict now appears only when it is true.
 if is_up; then
-  echo "Already running on :${PORT} — nothing to do."
+  echo "Already running on :${PORT} — the port is held."
   echo "Drive it with: browser-automation goto -s <session> <url>"
-  echo "(To force a fresh browser process — the only fix for a Chrome that can no"
-  echo " longer launch renderers — use: browser-automation launch --restart)"
+  echo "(Port held is not health. Check it works: browser-automation doctor)"
   exit 0
 fi
 

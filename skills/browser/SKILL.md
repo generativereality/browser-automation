@@ -56,17 +56,26 @@ file under `~/.browser-automation/sessions/`.
 
 ```bash
 npm install -g @generativereality/browser-automation
-browser-automation launch     # ensures a PROCESS, not a working one (see doctor)
+browser-automation launch     # start Chrome, and prove it can still make renderers
 browser-automation doctor     # verify Node, Chrome, renderer capacity, targets, sessions
 ```
 
-`launch` is idempotent — safe to call when Chrome is already up. But idempotent
-is all it is: `Already running on :9223 — nothing to do.` means **the port is
-held**, not that the browser still works. A long-lived Chrome can reach a state
-where it can no longer start renderers, and `launch` will keep cheerfully
-reporting nothing to do (see the renderer wedge in Gotchas). **`doctor` is the
-health check** — it is the one that actually makes a renderer run code. Override
-the profile path with `BROWSER_AUTOMATION_PROFILE=...` and the CDP host with
+`launch` is idempotent — safe to call when Chrome is already up. **It also
+verifies the browser works**, which is a different question from whether one is
+running: it ends with either
+
+```
+✔ Renderer capacity: a new tab got a live renderer in 47ms — this Chrome works.
+```
+
+or a non-zero exit and the full renderer-wedge diagnosis. That matters because a
+held port, a `/json/version` that answers and a `list` full of targets are all
+properties of the browser **process**, and the way a long-lived Chrome dies is
+that it keeps all three while losing the ability to give any new tab a
+**renderer** (see Gotchas). Older CLIs printed `nothing to do.` in exactly that
+state — **if your `launch` ends without a `Renderer capacity:` line, you are on
+one of those; run `doctor`, which is the same probe.** Override the profile path
+with `BROWSER_AUTOMATION_PROFILE=...` and the CDP host with
 `BROWSER_AUTOMATION_CDP=http://localhost:PORT` if needed.
 
 ## Commands
@@ -76,7 +85,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 
 | Need | Command |
 |---|---|
-| Start/refresh the Chrome | `browser-automation launch` |
+| Start the Chrome + verify it can make renderers | `browser-automation launch` |
 | Diagnose setup (incl. renderer capacity) | `browser-automation doctor` |
 | List sessions + every open tab (id, title, url) | `browser-automation list` |
 | Open a background tab | `browser-automation new -s work [url]` |
@@ -309,8 +318,12 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   answered normally, and `list` cheerfully returned 10 targets — while `goto` exited 1 and `eval`
   died with `CDP Runtime.evaluate timed out after 30000ms`. Port held, HTTP endpoint answering and
   targets listed are all properties of the **browser** process; the thing that is broken is its
-  ability to start a **renderer**, and only a probe that runs code in one can see it. That is
-  exactly what `doctor` does — nothing cheaper substitutes.
+  ability to start a **renderer**, and only a probe that runs code in one can see it.
+  **Since fixed:** `launch` now runs that probe itself and exits non-zero with the diagnosis
+  instead of reporting "nothing to do", so this particular green-across-the-board trap is closed.
+  It still will not restart for you — that stays something you type, because the tabs are not
+  only yours. On a CLI old enough to lack it, `doctor` is the same probe; nothing cheaper
+  substitutes for either.
 
   **The mechanism** (macOS, from Chrome's own log at `$TMPDIR/chrome-<port>.log` — `launch --restart`
   keeps the previous browser's log as `chrome-<port>.log.prev`, which is the one you want after a

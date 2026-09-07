@@ -73,7 +73,7 @@ export async function probeRenderer({ timeout = 5000 } = {}): Promise<RendererHe
 
   let targetId: string | undefined
   try {
-    targetId = await createTab('about:blank')
+    targetId = await createTab('about:blank', { timeout })
   } catch (e: any) {
     return { ok: false, ms: Date.now() - started, pageTargets, reason: `could not create a target at all: ${e?.message ?? e}` }
   }
@@ -225,7 +225,9 @@ export function explainRendererFailure(h: RendererHealth): string {
     `(site isolation needs a new renderer, which is the thing Chrome can't do).`,
     ``,
     `Recovery: restart Chrome. Nothing else clears it — closing tabs does not,`,
-    `and plain \`launch\` will not either (it is idempotent and sees a live browser).`,
+    `and plain \`launch\` will not either: it now DETECTS this (it runs this same`,
+    `probe and fails), but it will never restart a browser other sessions may be`,
+    `using without being told to. Restarting is always something you type.`,
     ``,
     `  browser-automation launch --restart     # closes ALL tabs, then relaunches`,
     ``,

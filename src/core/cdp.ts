@@ -201,8 +201,8 @@ export async function forceForeground(s: CdpSession): Promise<void> {
 }
 
 /** Run `fn` against the browser-level endpoint (Target.* commands), then close. */
-async function withBrowser<T>(fn: (s: CdpSession) => Promise<T>): Promise<T> {
-  const s = await connect(await browserWsUrl())
+async function withBrowser<T>(fn: (s: CdpSession) => Promise<T>, timeout?: number): Promise<T> {
+  const s = await connect(await browserWsUrl(), timeout === undefined ? undefined : { timeout })
   try {
     return await fn(s)
   } finally {
@@ -210,12 +210,22 @@ async function withBrowser<T>(fn: (s: CdpSession) => Promise<T>): Promise<T> {
   }
 }
 
-/** Create a new tab in the BACKGROUND (never steals focus) -> returns targetId. */
-export async function createTab(url = 'about:blank'): Promise<string> {
+/**
+ * Create a new tab in the BACKGROUND (never steals focus) -> returns targetId.
+ *
+ * `timeout` exists for the health probe. On a browser that has lost the ability
+ * to make renderers, `Target.createTarget` itself can hang rather than fail, so
+ * a caller that means to spend ~100ms deciding whether the browser works would
+ * otherwise sit on the default 30s — measured 2026-09-07, when this put a 30s
+ * stall in front of every `launch` on a wedged Chrome. Ordinary callers pass
+ * nothing and keep the generous default, which is right for them: a real tab
+ * opening slowly should still open.
+ */
+export async function createTab(url = 'about:blank', { timeout }: { timeout?: number } = {}): Promise<string> {
   return withBrowser(async (s) => {
-    const r = await s.send('Target.createTarget', { url, background: true })
+    const r = await s.send('Target.createTarget', { url, background: true }, timeout)
     return r.targetId as string
-  })
+  }, timeout)
 }
 
 export async function closeTab(targetId: string): Promise<boolean> {
