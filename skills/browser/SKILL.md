@@ -56,12 +56,17 @@ file under `~/.browser-automation/sessions/`.
 
 ```bash
 npm install -g @generativereality/browser-automation
-browser-automation launch     # start this user's Chrome (idempotent)
-browser-automation doctor     # verify Node, Chrome, targets, sessions
+browser-automation launch     # ensures a PROCESS, not a working one (see doctor)
+browser-automation doctor     # verify Node, Chrome, renderer capacity, targets, sessions
 ```
 
-`launch` is idempotent — safe to call when Chrome is already up. Override the
-profile path with `BROWSER_AUTOMATION_PROFILE=...` and the CDP host with
+`launch` is idempotent — safe to call when Chrome is already up. But idempotent
+is all it is: `Already running on :9223 — nothing to do.` means **the port is
+held**, not that the browser still works. A long-lived Chrome can reach a state
+where it can no longer start renderers, and `launch` will keep cheerfully
+reporting nothing to do (see the renderer wedge in Gotchas). **`doctor` is the
+health check** — it is the one that actually makes a renderer run code. Override
+the profile path with `BROWSER_AUTOMATION_PROFILE=...` and the CDP host with
 `BROWSER_AUTOMATION_CDP=http://localhost:PORT` if needed.
 
 ## Commands
@@ -291,6 +296,22 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
     right URL but an **empty title forever**; every `Runtime.evaluate` against it times out.
     `Page.captureScreenshot` returns `Internal error`. The target shell exists; the renderer does not.
 
+  **It gets SLOW before it fails outright — that is the early warning.** Observed 2026-09-07 on a
+  Chrome that had been up 12 days: every `goto` took ~25–30s, and a batch of three blew a 120s
+  timeout, hours before anything failed hard. That was misread as "large files, slow browser" and
+  worked around with longer timeouts for many minutes; the actual fix was one `launch --restart`,
+  after which the same pages loaded instantly and 14 `file://` tabs opened in two quick batches.
+  **A `goto` that has quietly become slow is this, not your page.** Raise the timeout at most once,
+  then run `doctor`.
+
+  **Every cheap signal stays green, so do not take any of them as health.** On that same wedged
+  browser: `launch` said `Already running on :9223 — nothing to do.`, `curl :9223/json/version`
+  answered normally, and `list` cheerfully returned 10 targets — while `goto` exited 1 and `eval`
+  died with `CDP Runtime.evaluate timed out after 30000ms`. Port held, HTTP endpoint answering and
+  targets listed are all properties of the **browser** process; the thing that is broken is its
+  ability to start a **renderer**, and only a probe that runs code in one can see it. That is
+  exactly what `doctor` does — nothing cheaper substitutes.
+
   **The mechanism** (macOS, from Chrome's own log at `$TMPDIR/chrome-<port>.log` — `launch --restart`
   keeps the previous browser's log as `chrome-<port>.log.prev`, which is the one you want after a
   restart):
@@ -366,11 +387,29 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   ```bash
   browser-automation eval -s x '({ready:document.readyState,vis:document.visibilityState,len:document.body.innerText.length})'
   ```
-  `visibilityState: "hidden"` with a stuck `len` is this, not a selector problem.
+  `visibilityState: "hidden"` with a **stuck `len`** is this, not a selector problem. Note the
+  stuck `len` is the whole tell: `hidden` on its own is the normal, healthy state of every
+  backgrounded tab — verified 2026-09-07, a background tab reporting `hidden` returned its real
+  painted text — so never read `hidden` alone as a diagnosis.
   **Fix:** front the tab. There is no `activate` command — a `click --trusted` on any harmless
   element (a wrapper `div` from the snapshot works; avoid submit buttons and links) brings the tab
   to front and waits for it to be visible, and the page paints immediately. Same root cause as the
   WebAuthn note above, different symptom: that one refuses, this one silently never renders.
+
+  **Do not confuse this with the renderer wedge above.** Both present to an operator as "the page
+  isn't there, but every tool says fine", and the fixes are opposite — one is a per-tab nudge, the
+  other closes every tab in the browser. What separates them:
+
+  | | backgrounded tab never paints | Chrome cannot make renderers |
+  |---|---|---|
+  | `goto` | succeeds, rc=0 (may be slow) | **rc=1**, or `Page.enable timed out` |
+  | `eval` | works, returns a result | **`Runtime.evaluate` times out at 30000ms** |
+  | scope | that one tab | **every** new tab / cross-origin nav |
+  | `doctor` | `✓ Renderer capacity` | names the wedge + pid |
+  | fix | `click --trusted` on the tab | `launch --restart` (**ask first**) |
+
+  `eval` is the fast discriminator: if it answers at all, the renderer is alive and you are in the
+  painting case. If it times out, stop poking the page and run `doctor`.
 - **Page still loading.** `goto` waits for the load event, but SPAs render after.
   If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
   once a known element should be present.
