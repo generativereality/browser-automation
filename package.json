@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && bash scripts/check-one-port.sh && npm run build && npm test",
     "test": "node --test \"test/**/*.test.mjs\"",
-    "release": "bumpp && npm publish",
+    "release": "echo 'Releases publish from CI, not here. Bump package.json + .claude-plugin/plugin.json, commit onto master, then: git tag vX.Y.Z && git push origin vX.Y.Z — then approve the gated job in GitHub Actions. `npm publish` from a laptop 404s (granular token). See .github/workflows/release.yml.' >&2; exit 1",
     "sync-plugin": "bash scripts/sync-plugin.sh",
     "prepack": "npm run build"
   },

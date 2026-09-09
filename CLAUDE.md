@@ -38,11 +38,24 @@ When the user says publish:
 
 1. Bump the version in **both** `package.json` and `.claude-plugin/plugin.json`
    (keep in sync) per the policy above (patch for gap-fills/fixes).
-2. `git commit && git push`.
-3. `npm publish` (granular token in `~/.npmrc`; never prompt for OTP).
-4. `npm run sync-plugin` — syncs `plugin.json` + `SKILL.md` to `../plugins`,
+2. `git commit`, and get it onto `master` (that is what gets tagged).
+3. `git tag v<version> && git push origin v<version>`.
+4. **Ask the user to approve the queued job** at
+   <https://github.com/generativereality/browser-automation/actions>. Pushing the
+   tag does NOT publish: the `release` environment requires a human reviewer, and
+   nothing you can do from here approves it. Wait for it to go green.
+5. `npm run sync-plugin` — syncs `plugin.json` + `SKILL.md` to `../plugins`,
    commits, pushes (so `/plugin install browser-automation@generativereality`
    gets the update).
+
+**Do NOT `npm publish` from this machine.** It cannot work and it fails
+*misleadingly*: the credential in `~/.npmrc` is a GRANULAR token scoped to other
+packages, so the PUT comes back **404** — not 403, not "you are not logged in" —
+while `npm whoami` and `npm owner ls` keep answering correctly, because they are
+unscoped reads. The package publishes from CI via OIDC trusted publishing (no
+token, no secret); see the long header in `.github/workflows/release.yml`, which
+also warns that **npm trusts that workflow by FILENAME** — renaming it silently
+breaks releases.
 
 One fix vs one feature = separate commits and separate version bumps. Don't
 bundle a fix into a feature release.
