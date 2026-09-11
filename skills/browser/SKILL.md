@@ -104,7 +104,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Inspect network (find the API, headers, bodies) | `browser-automation network -m bank --reload --filter api --headers --body` |
 | Screenshot a tab | `browser-automation screenshot -m op.fi --full -o shot.png` |
 | Prune stale session bookmarks + dead tabs | `browser-automation gc --dry` (then without `--dry`) |
-| Restart Chrome (only fix for the renderer wedge — closes ALL tabs) | `browser-automation launch --restart` |
+| Restart Chrome (LAST resort — closes ALL tabs, for EVERY session; only once `doctor` confirms the Mach name is absent) | `browser-automation launch --restart` |
 | Forget a session (tab stays open) | `browser-automation close -s work` |
 | Forget **and** close the browser tab | `browser-automation close -s work --tab` |
 
@@ -287,11 +287,49 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   isn't snapshot-interactive. After the drop, `read`/`screenshot`/`network` to
   confirm processing started, then grab the result (often a download endpoint you
   can pull with `download --url`).
+- **A NEW tab's renderer can be slow rather than broken — do not restart Chrome for it.**
+  ⚠️ **Read this before acting on the wedge diagnosis below.** Measured 2026-09-11 on
+  Chrome 152.0.7977.83, time from `Target.createTarget` to the first `Runtime.evaluate`
+  returning, 8 trials each:
+
+  | how the target was created | median | worst |
+  |---|---|---|
+  | `background: true` (how this tool opens every tab) | 367ms | 12517ms, and >30s once |
+  | `background: true` + `Target.activateTarget` | 19ms | 65ms |
+  | `background: false` | 18ms | 22ms |
+
+  The renderer **process exists** in every arm — `ps` gains a `--type=renderer` child either
+  way. A background target is simply not given a renderer that answers promptly, and on a
+  loaded machine (this one was at load average 38) the tail runs past any budget worth
+  waiting. **This is not the wedge**, and a restart does nothing for it.
+
+  It cost real work to learn: for three weeks `goto` reported this as the permanent,
+  restart-only condition below, and `launch --restart` closes every tab of every session
+  sharing this Chrome. It twice destroyed unrecoverable work belonging to another session —
+  a finished AlternativeTo submission with hand edits, and an Azure signup flow mid-form.
+
+  **Since fixed (v0.4.12+):** `new`/`goto` wait for a late renderer and, if it still has not
+  answered, briefly activate the tab to force one and hand the window straight back (you get
+  a `WARN` saying so). The probe retries with a doubling budget, and the verdict now names
+  the permanent failure **only when its own signature is present**. On an older CLI, the
+  cheap move is to retry, or to drive a tab that already works.
+
+  **Whatever the version: before restarting anything, check the two corroborations.** Both
+  were decisive and neither used to be consulted:
+  ```bash
+  launchctl print "gui/$(id -u)" | grep MachPortRendezvousServer.<browser-pid>
+  ps -Ao command= | grep -c -- '--type=renderer'
+  ```
+  Mach name **present** + renderers **alive** ⇒ this is slowness, not the wedge. Retry, or use
+  a live tab. Mach name **absent** ⇒ it is the wedge, and only then is a restart the answer.
+
 - **"The site is blocking us" — when it is really Chrome that cannot make renderers.**
   A browser process can permanently lose the ability to launch **renderer processes** while
   looking perfectly healthy. Every tab that already exists keeps working, so nothing seems wrong
   until you open a tab or navigate somewhere new, and then the errors read as the remote site's
   doing. Diagnosed 2026-08-22; it cost an hour of blaming ferry-operator bot protection.
+  ⚠️ **This is a real condition and a rare one.** Confirm the Mach name is absent (above)
+  before you believe it — a slow background renderer produces every symptom in this list.
 
   How it shows up:
   - `browser-automation new` + `goto` → `CDP Page.enable timed out after 30000ms`, **even for
@@ -366,18 +404,34 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   `Page.enable timed out` now arrives with the diagnosis attached instead of sending you to the
   site's bot-protection docs.
 
-  **Recovery — only a Chrome restart clears it.** The bootstrap name is registered at startup and
-  never re-registered, so nothing short of a new browser process helps. Closing tabs does not, and
-  plain `launch` will not either (idempotent by design — it sees a live browser and exits happy):
-  ```bash
-  browser-automation launch --restart    # SIGTERM (profile flushes cleanly), wait, relaunch
-  ```
-  It reports how many tabs it is about to close. **Those tabs belong to every parallel Claude Code
-  session sharing this Chrome — ask Fred first, never restart unilaterally.**
+  **Recovery — cheapest first, and a restart only once the Mach name is confirmed absent.**
+
+  1. **Retry.** A new tab's renderer has been measured taking 12s and more on a loaded
+     machine, and late is not broken.
+  2. **Drive a tab that already works.** An existing tab navigates same-origin without
+     needing a new renderer, so it keeps working throughout even during a genuine wedge:
+     ```bash
+     browser-automation list
+     browser-automation eval -t <id> "location.href='<url>'"
+     ```
+  3. **`browser-automation doctor`** — re-measures, prints the two corroborations, and shows
+     the recent probe-time distribution from `~/.browser-automation/renderer-probes.jsonl`.
+  4. **Only if `doctor` reports the Mach rendezvous service ABSENT**, restart. The bootstrap
+     name is registered at startup and never re-registered, so nothing short of a new browser
+     process helps; closing tabs does not, and plain `launch` will not either (idempotent by
+     design — it sees a live browser and exits happy):
+     ```bash
+     browser-automation launch --restart    # SIGTERM (profile flushes cleanly), wait, relaunch
+     ```
+     It reports how many tabs it is about to close. **Those tabs belong to every parallel
+     Claude Code session sharing this Chrome — ask Fred first, never restart unilaterally.**
 
   **Housekeeping is a different problem** — `browser-automation gc` prunes stale session bookmarks
   (they are never cleaned up otherwise; this machine had accumulated 234, only 5 of them live) and
-  closes tabs whose renderer does not answer. Use `--dry` first. It is genuinely useful, but it is
+  closes tabs whose renderer does not answer. Use `--dry` first. `list` now counts stale
+  bookmarks instead of printing them (`list --all` to see them) — 105 stale lines above a
+  24-tab Chrome is how "there are a hundred tabs open" became the leading theory for a
+  renderer failure that has nothing to do with tab count. It is genuinely useful, but it is
   **not** a fix for the wedge above, and it never closes a working tab unless you pass `--orphans`
   — tabs get addressed by `-m` and opened by hand, so "no session claims it" is not evidence that
   nobody wants it.

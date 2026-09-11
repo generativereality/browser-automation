@@ -11,10 +11,19 @@
 #   A browser process can permanently lose the ability to launch renderers (see
 #   src/core/renderer-health.ts for the mechanism). Every existing tab keeps
 #   working, so the browser looks fine, but no new tab or cross-origin
-#   navigation ever will again. Restarting is the ONLY recovery — and plain
-#   `launch` cannot do it, because it is idempotent by design and correctly
-#   reports "already running". Without an explicit flag the only way out was to
-#   go and kill Chrome by hand, which is how a diagnosis ends up unactionable.
+#   navigation ever will again. Restarting is the only recovery FROM THAT ONE
+#   CONDITION — and plain `launch` cannot do it, because it is idempotent by
+#   design and correctly reports "already running". Without an explicit flag the
+#   only way out was to go and kill Chrome by hand, which is how a diagnosis
+#   ends up unactionable.
+#
+#   It is a flag and not an automatic step because it closes every tab of every
+#   session sharing this browser. That condition is confirmed by ONE thing: the
+#   Mach bootstrap name being absent from `launchctl print gui/$UID`. A new tab
+#   whose renderer is merely slow to answer looks identical and is not it — for
+#   three weeks it was reported as it, and restarting for it twice destroyed
+#   another session's unrecoverable work. `browser-automation doctor` now prints
+#   which of the two it is; nothing here can tell them apart.
 #
 # Why this script exists:
 #   The `browser-automation` skill prefers to drive a real, persistent Chrome
