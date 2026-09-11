@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { cdpHost, cdpPort, listTargets } from '../core/cdp.js'
 import { listSessions } from '../core/session.js'
-import { probeRenderer, explainRendererFailure, browserPid, rendezvousRegistered, chromeLogPath } from '../core/renderer-health.js'
+import { probeRenderer, explainRendererFailure, gatherEvidence, recentProbeStats, chromeLogPath } from '../core/renderer-health.js'
 
 const PROFILE = process.env.BROWSER_AUTOMATION_PROFILE
   || `${homedir()}/Library/Application Support/Google/Chrome/browser-automation`
@@ -92,22 +92,43 @@ export const doctorCommand = define({
     // on a browser in that state is worse than no doctor: it actively points
     // the investigation at the site. So measure it, with the round-trip that is
     // the only thing that tells the two apart.
-    const health = await probeRenderer().catch((e) => ({ ok: false, ms: 0, pageTargets: 0, reason: String(e?.message ?? e) }))
+    const health = await probeRenderer().catch((e) => ({
+      ok: false, ms: 0, pageTargets: 0, reason: String(e?.message ?? e),
+      outcome: 'error' as const, verdict: 'unknown' as const, attempts: [],
+    }))
     if (health.ok) {
+      const woke = health.attempts.some((a) => a.woke)
       ok(`Renderer capacity: a new tab got a live renderer in ${health.ms}ms`)
-      const pid = browserPid()
-      const rendezvous = rendezvousRegistered(pid)
-      if (rendezvous === false) {
+      if (woke) {
+        // Worth saying out loud: it worked, but only because the tab was
+        // activated. That is the state in which `goto` used to fail outright.
+        consola.log(`    ⚠ it only answered after being activated — this Chrome is slow to give`)
+        consola.log(`      BACKGROUND tabs a renderer (measured: median 367ms, tail past 30s).`)
+        consola.log(`      Commands will work; new tabs may briefly raise the Chrome window.`)
+      }
+      const ev = gatherEvidence()
+      if (ev.rendezvous === false) {
         // Healthy probe, missing bootstrap name: not a state we have seen, but
         // if it happens it is the wedge arriving, so say so rather than wait.
-        consola.log(`    ⚠ but the Mach rendezvous service for pid ${pid} is NOT registered —`)
+        consola.log(`    ⚠ but the Mach rendezvous service for pid ${ev.pid} is NOT registered —`)
         consola.log(`      new renderers are expected to start failing. Restart Chrome soon:`)
         consola.log(`      browser-automation launch --restart`)
       }
     } else {
-      bad(`Renderer capacity: FAILED`)
+      bad(`Renderer capacity: FAILED (${health.verdict})`)
       for (const line of explainRendererFailure(health).split('\n')) consola.log(`    ${line}`)
       consola.log(`    Chrome's own log: ${chromeLogPath()}`)
+    }
+
+    // **What the probe usually costs here.** Nobody could say whether the 5000ms
+    // budget was sane when it started condemning working browsers, because no
+    // history was kept. Now there is one.
+    const stats = recentProbeStats()
+    if (stats) {
+      consola.log(
+        `  • last ${stats.n} renderer probe(s): ${stats.failures} failed`
+        + (stats.median >= 0 ? `, median ${stats.median}ms, slowest success ${stats.worst}ms` : ''),
+      )
     }
 
     // Sessions. Bookmarks are never cleaned up on their own, so on a machine

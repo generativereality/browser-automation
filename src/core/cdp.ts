@@ -228,6 +228,27 @@ export async function createTab(url = 'about:blank', { timeout }: { timeout?: nu
   }, timeout)
 }
 
+/**
+ * Bring a target to the front of its window.
+ *
+ * **This raises the Chrome window over whatever the operator is using** —
+ * measured on macOS 2026-09-11, with the terminal deliberately frontmost:
+ * Target.activateTarget, GET /json/activate/<id>, Page.bringToFront and
+ * createTarget(background:false) all moved the frontmost app from the terminal
+ * to Google Chrome. There is no quiet variant.
+ *
+ * It is here because a backgrounded target's renderer can take 12+ seconds to
+ * answer while an activated one answers in ~19ms (see core/renderer-wake.ts),
+ * and a brief flicker beats refusing to work. Nothing calls it casually:
+ * `ensureRenderer` spends it only after a grace period has expired, and hands
+ * the window straight back.
+ */
+export async function activateTab(targetId: string): Promise<void> {
+  return withBrowser(async (s) => {
+    await s.send('Target.activateTarget', { targetId })
+  })
+}
+
 export async function closeTab(targetId: string): Promise<boolean> {
   return withBrowser(async (s) => {
     const r = await s.send('Target.closeTarget', { targetId })

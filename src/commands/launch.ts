@@ -56,15 +56,28 @@ export const launchCommand = define({
     // the only thing here that talks to a renderer at all.
     const health = await probeRenderer().catch((e: any) => ({
       ok: false as const, ms: 0, pageTargets: 0, reason: String(e?.message ?? e),
+      outcome: 'error' as const, verdict: 'unknown' as const, attempts: [],
     }))
     if (health.ok) {
-      consola.success(`Renderer capacity: a new tab got a live renderer in ${health.ms}ms — this Chrome works.`)
+      const woke = health.attempts.some((a) => a.woke)
+      consola.success(
+        `Renderer capacity: a new tab got a live renderer in ${health.ms}ms — this Chrome works.`
+        + (woke ? ' (It had to be activated to get there — this browser is slow to give background tabs a renderer.)' : ''),
+      )
       return
     }
     // A browser that cannot make renderers is not a successful launch, whatever
     // the script concluded from the port being held. Fail, so a script that
     // chains off `launch` stops here instead of on a mystery `goto` timeout.
-    consola.error('Chrome is up, but it cannot make renderers — this browser is unusable.\n')
+    //
+    // But say which failure it is. "Unusable" was printed for a browser that
+    // was merely slow, directly above advice to restart it — see the header of
+    // core/renderer-health.ts for what that cost.
+    consola.error(
+      health.verdict === 'wedged'
+        ? 'Chrome is up, but it can never make a renderer again — this browser is unusable.\n'
+        : 'Chrome is up, but a new tab did not get a working renderer in time.\n',
+    )
     for (const line of explainRendererFailure(health).split('\n')) consola.log(line)
     consola.log(`\nChrome's own log: ${chromeLogPath()}`)
     process.exit(1)
