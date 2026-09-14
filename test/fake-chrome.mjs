@@ -66,6 +66,9 @@ function onTextFrames(sock, head, cb) {
  *   createTargetHangs=true -> the browser endpoint never answers createTarget.
  *   firesLoadEvent=false   -> `Page.navigate` is answered but no
  *                             `Page.loadEventFired` ever follows.
+ *   focusEmulationWorks=false -> Emulation.setFocusEmulationEnabled is answered
+ *                             but the renderer goes on reporting itself hidden,
+ *                             as an older Chrome without the command would.
  *
  * ⭐ `firesLoadEvent` defaults TRUE because real Chrome fires it — measured at
  * 0.19s — and the default has to be the real world. It exists as a switch
@@ -76,9 +79,22 @@ function onTextFrames(sock, head, cb) {
  * Written the wrong way round first, and the test passed against the bug.
  */
 export async function startFakeChrome(opts = {}) {
-  const { rendererAnswers = true, createTargetHangs = false, firesLoadEvent = true } = opts
+  const {
+    rendererAnswers = true,
+    createTargetHangs = false,
+    firesLoadEvent = true,
+    focusEmulationWorks = true,
+  } = opts
   const targets = new Map()
-  const stats = { activations: 0, createTargets: 0, evaluates: 0 }
+  // `pageMethods` records what was asked of a PAGE endpoint, in order, so a test
+  // can assert which route a command took — the quiet focus emulation or the
+  // loud activation — rather than only that it printed something cheerful.
+  const stats = { activations: 0, createTargets: 0, evaluates: 0, pageMethods: [] }
+  // Whether the renderer currently believes it is focused. A real Chrome flips
+  // this when Emulation.setFocusEmulationEnabled lands; an older build that does
+  // not support the command leaves it false, which is the arm `focus` has to
+  // report honestly instead of ticking.
+  let emulatedFocus = false
   let port = 0
   const ws = (path) => `ws://127.0.0.1:${port}${path}`
 
@@ -131,8 +147,23 @@ export async function startFakeChrome(opts = {}) {
         return reply({})
       }
       // Page endpoint: a silent renderer answers nothing at all.
+      stats.pageMethods.push(msg.method)
       if (msg.method === 'Runtime.evaluate') stats.evaluates++
       if (!rendererAnswers) return
+      if (msg.method === 'Emulation.setFocusEmulationEnabled') {
+        if (focusEmulationWorks) emulatedFocus = msg.params?.enabled !== false
+        return reply({})
+      }
+      // The focus probe asks for a shape, not a number — answer it as a real
+      // renderer would, so the command's success path is reachable in a test.
+      if (msg.method === 'Runtime.evaluate' && /document\.hasFocus/.test(msg.params?.expression ?? '')) {
+        return reply({
+          result: {
+            type: 'object',
+            value: { focused: emulatedFocus, visibility: emulatedFocus ? 'visible' : 'hidden' },
+          },
+        })
+      }
       if (msg.method === 'Runtime.evaluate') return reply({ result: { type: 'number', value: 2 } })
       if (msg.method === 'Page.navigate') {
         reply({ frameId: 'f1' })

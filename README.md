@@ -104,6 +104,7 @@ browser-automation bind -s bank -m nordnet    # …or adopt it into a session
 | `fill (-s\|-m\|-t) <ref> <value> [--submit]` | Type into a field by ref |
 | `read (-s\|-m\|-t) [selector]` | Print page text (or a CSS selector's text) |
 | `eval (-s\|-m\|-t) <js>` | Evaluate a JS expression in the tab (escape hatch) |
+| `focus (-s\|-m\|-t) [--raise]` | Make the tab report itself focused + visible, for pages that defer work while hidden (rendering, polling, charts, video). Quiet by default — no window moves; `--raise` genuinely brings it to the front and **takes the screen** |
 | `download (-s\|-m\|-t) (--click <ref>\|--url <href>)` | Capture a file/CSV download, wait for completion, print the path |
 | `setfiles (-s\|-m\|-t) <ref> <path…>` | Set files on a known `<input type=file>` by ref (fires input/change) |
 | `upload (-s\|-m\|-t) --click <ref> <path…>` | Upload via a button that opens a file chooser (transient/custom inputs) |
