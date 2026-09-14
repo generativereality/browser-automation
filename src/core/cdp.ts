@@ -305,12 +305,53 @@ export async function captureScreenshot(targetId: string, { fullPage = false }: 
 }
 
 /** Navigate a page target and wait for load (or timeout). */
-export async function navigate(targetId: string, url: string, { timeout = 30000 } = {}): Promise<void> {
+/**
+ * How long to wait for a page's load event before giving up on confirming it.
+ *
+ * Read from the environment so the suite can exercise the give-up path without
+ * spending 30 real seconds on it. Deliberately NOT used by the test that checks
+ * a prompt exit: shrinking the timeout there would shrink the leak it exists to
+ * catch, and it would pass against the bug.
+ */
+function navTimeout(): number {
+  const v = Number(process.env.BROWSER_AUTOMATION_NAV_TIMEOUT)
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 30000
+}
+
+export async function navigate(
+  targetId: string,
+  url: string,
+  { timeout = navTimeout() } = {},
+): Promise<{ loaded: boolean }> {
   return withPage(targetId, async (s) => {
     await s.send('Page.enable')
-    const loaded = new Promise<void>((resolve) => s.on('Page.loadEventFired', () => resolve()))
+    let seen = false
+    const loaded = new Promise<void>((resolve) => s.on('Page.loadEventFired', () => { seen = true; resolve() }))
     const r = await s.send('Page.navigate', { url })
     if (r.errorText) throw new Error(`navigate failed: ${r.errorText}`)
-    await Promise.race([loaded, new Promise<void>((res) => setTimeout(res, timeout))])
+
+    // ⛔ The loser of this race MUST be cleared, and for four months it was not.
+    //
+    // `Promise.race` settles the moment the load event lands — in ~0.19s against
+    // a real Chrome — but an un-cleared `setTimeout` keeps Node's event loop
+    // alive until it fires. So the CLI printed its success line immediately and
+    // then sat there doing nothing for the remaining 30 seconds before exiting.
+    // Measured 2026-09-14: `goto` took 31s wall-clock on five consecutive runs,
+    // new tab and existing tab alike, with the ✔ appearing in the first second.
+    //
+    // It read as "the browser is slow" rather than as a bug in this file, which
+    // is why it survived the whole renderer-health investigation sitting one
+    // line below the thing being investigated. Nothing was wrong with Chrome.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([loaded, new Promise<void>((res) => { timer = setTimeout(res, timeout) })])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+
+    // A page can legitimately never fire a load event, so a miss is not an
+    // error — but the caller must be able to tell "loaded" from "gave up
+    // waiting", rather than being handed the same silence for both.
+    return { loaded: seen }
   })
 }

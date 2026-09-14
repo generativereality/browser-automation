@@ -61,12 +61,22 @@ function onTextFrames(sock, head, cb) {
 }
 
 /**
- * @param {{ rendererAnswers?: boolean, createTargetHangs?: boolean }} opts
+ * @param {{ rendererAnswers?: boolean, createTargetHangs?: boolean, firesLoadEvent?: boolean }} opts
  *   rendererAnswers=false  -> page targets are created but never answer.
  *   createTargetHangs=true -> the browser endpoint never answers createTarget.
+ *   firesLoadEvent=false   -> `Page.navigate` is answered but no
+ *                             `Page.loadEventFired` ever follows.
+ *
+ * ⭐ `firesLoadEvent` defaults TRUE because real Chrome fires it — measured at
+ * 0.19s — and the default has to be the real world. It exists as a switch
+ * because the two arms catch opposite faults, and a fixture that can only
+ * express one of them cannot tell them apart: with the event, a slow exit means
+ * somebody left a timer pending; without it, a slow exit is the timeout doing
+ * its job and the fault to look for is a command that CLAIMS the page loaded.
+ * Written the wrong way round first, and the test passed against the bug.
  */
 export async function startFakeChrome(opts = {}) {
-  const { rendererAnswers = true, createTargetHangs = false } = opts
+  const { rendererAnswers = true, createTargetHangs = false, firesLoadEvent = true } = opts
   const targets = new Map()
   const stats = { activations: 0, createTargets: 0, evaluates: 0 }
   let port = 0
@@ -124,7 +134,16 @@ export async function startFakeChrome(opts = {}) {
       if (msg.method === 'Runtime.evaluate') stats.evaluates++
       if (!rendererAnswers) return
       if (msg.method === 'Runtime.evaluate') return reply({ result: { type: 'number', value: 2 } })
-      if (msg.method === 'Page.navigate') return reply({ frameId: 'f1' })
+      if (msg.method === 'Page.navigate') {
+        reply({ frameId: 'f1' })
+        // Real Chrome follows the reply with the load event a moment later.
+        if (firesLoadEvent) {
+          setTimeout(() => {
+            try { sendText(sock, JSON.stringify({ method: 'Page.loadEventFired', params: { timestamp: 1 } })) } catch {}
+          }, 10)
+        }
+        return
+      }
       return reply({})
     })
   })

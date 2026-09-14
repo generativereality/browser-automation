@@ -38,7 +38,16 @@ export const gotoCommand = define({
         )
       }
     }
-    await withRendererDiagnosis(() => navigate(targetId, target))
+    const nav = await withRendererDiagnosis(() => navigate(targetId, target))
+    // Say so when the load event never arrived. The navigation itself may be
+    // perfectly fine — a page that never fires `load` is legal — but "we waited
+    // and gave up" must not print the same line as "it loaded".
+    if (!nav.loaded) {
+      consola.warn(
+        `No load event arrived, so the page may still be loading. The navigation `
+        + `itself was accepted; this is a statement about what could not be confirmed.`,
+      )
+    }
 
     // Persist the binding only in pure session mode (no explicit -m/-t).
     if (!opts.match && !opts.target) {
