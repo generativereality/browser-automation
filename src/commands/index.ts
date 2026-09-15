@@ -7,6 +7,7 @@ import { snapshotCommand } from './snapshot.js'
 import { clickCommand } from './click.js'
 import { fillCommand } from './fill.js'
 import { readCommand } from './read.js'
+import { focusCommand } from './focus.js'
 import { evalCommand } from './eval.js'
 import { downloadCommand } from './download.js'
 import { setfilesCommand } from './setfiles.js'
@@ -39,6 +40,7 @@ const subCommands = new Map<string, Command<any>>([
   ['click', clickCommand],
   ['fill', fillCommand],
   ['read', readCommand],
+  ['focus', focusCommand],
   ['eval', evalCommand],
   ['download', downloadCommand],
   ['setfiles', setfilesCommand],

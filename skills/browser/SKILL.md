@@ -36,9 +36,16 @@ file under `~/.browser-automation/sessions/`.
   Bind a name to an already-open tab with `bind -s name -m <substr>`. Parallel
   Claude Code sessions stay isolated by *convention* — each drives its own tab
   (its own `-s` name or `-m` match) — but any tab is reachable on demand.
-- **No focus stealing.** New tabs are created in the background; the CLI never
-  calls `Target.activateTarget` / `Page.bringToFront`. Your foreground app and
-  sibling sessions are left alone.
+- **No focus stealing — unless you ask for it.** New tabs are created in the
+  background, and nothing fronts a tab as a side effect of ordinary driving:
+  `goto`, `read`, `snapshot`, `fill`, `eval`, `screenshot` all leave your
+  frontmost app alone. Three things deliberately do more, and only these:
+  `focus` (emulates focus/visibility in the renderer — still **no window
+  moves**), `click --trusted` and `drop` (force-front the tab, because CDP input
+  grants no user activation to a renderer that considers itself hidden), and
+  `focus --raise`, which calls `Target.activateTarget` and **genuinely takes the
+  operator's screen**. `--raise` is the only one that does; reach for plain
+  `focus` unless a person needs to see the tab.
 - **Self-healing.** If the tab was closed (or Chrome restarted and reissued
   targetIds), the next `goto` just opens a fresh background tab for that session.
 - **Refs live in the DOM.** `snapshot` stamps `data-ba-ref="e7"` onto each
@@ -103,6 +110,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Drop file(s) onto a drag-and-drop zone | `browser-automation drop -m app e7 ~/Desktop/clip.mp4` (add `--js` for a synthetic drop) |
 | Inspect network (find the API, headers, bodies) | `browser-automation network -m bank --reload --filter api --headers --body` |
 | Screenshot a tab | `browser-automation screenshot -m op.fi --full -o shot.png` |
+| Make a hidden tab render (charts, video, polling) | `browser-automation focus -s work` (add `--raise` to really front it) |
 | Prune stale session bookmarks + dead tabs | `browser-automation gc --dry` (then without `--dry`) |
 | Restart Chrome (LAST resort — closes ALL tabs, for EVERY session; only once `doctor` confirms the Mach name is absent) | `browser-automation launch --restart` |
 | Forget a session (tab stays open) | `browser-automation close -s work` |
@@ -458,10 +466,20 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   stuck `len` is the whole tell: `hidden` on its own is the normal, healthy state of every
   backgrounded tab — verified 2026-09-07, a background tab reporting `hidden` returned its real
   painted text — so never read `hidden` alone as a diagnosis.
-  **Fix:** front the tab. There is no `activate` command — a `click --trusted` on any harmless
-  element (a wrapper `div` from the snapshot works; avoid submit buttons and links) brings the tab
-  to front and waits for it to be visible, and the page paints immediately. Same root cause as the
-  WebAuthn note above, different symptom: that one refuses, this one silently never renders.
+  **Fix:** make the tab report itself visible.
+  ```bash
+  browser-automation focus -s x        # quiet: no window moves, you keep your frontmost app
+  ```
+  `focus` emulates focus + visibility in the renderer, then **reads back what it actually
+  achieved** rather than reporting that it sent the command — so a partial result says which half
+  is missing instead of printing a tick over it. The page paints immediately. Add `--raise` only
+  when a *person* needs to see the tab: that genuinely fronts it and **takes the operator's
+  screen**, which is exactly what you normally want to avoid.
+  Same root cause as the WebAuthn note above, different symptom: that one refuses, this one
+  silently never renders.
+  *(Older CLIs had no `focus`; the workaround was a `click --trusted` on a harmless wrapper `div`,
+  which fronted the tab as a side effect of needing trusted input. Prefer `focus` — it says what it
+  achieved, and it does not click anything.)*
 
   **Do not confuse this with the renderer wedge above.** Both present to an operator as "the page
   isn't there, but every tool says fine", and the fixes are opposite — one is a per-tab nudge, the
@@ -473,7 +491,7 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   | `eval` | works, returns a result | **`Runtime.evaluate` times out at 30000ms** |
   | scope | that one tab | **every** new tab / cross-origin nav |
   | `doctor` | `✓ Renderer capacity` | names the wedge + pid |
-  | fix | `click --trusted` on the tab | `launch --restart` (**ask first**) |
+  | fix | `focus` on the tab | `launch --restart` (**ask first**) |
 
   `eval` is the fast discriminator: if it answers at all, the renderer is alive and you are in the
   painting case. If it times out, stop poking the page and run `doctor`.
