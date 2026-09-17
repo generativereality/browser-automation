@@ -62,6 +62,14 @@ bundle a fix into a feature release.
 
 ## Dev gotchas
 
+- **`npm test` locally is meaningless while this user’s Chrome is up, and it is not a regression.**
+  Measured 2026-09-17: **61 failing / 12 passing** on `master`, and byte-identically on a PR branch,
+  while the same suite is **39/39 green in CI**. The renderer-health tests create and probe real
+  targets, so against a busy shared browser on `:9223` they time out — and they open tabs in the
+  browser you are working in. `BROWSER_AUTOMATION_PORT` does not isolate them; the failures persist.
+  ⇒ **Compare a branch against `master` under the same conditions before believing a red suite**, and
+  treat the CI run on the release tag as the authoritative signal. A local red here says nothing.
+
 - The agent shell runs with `set -e -o pipefail` — `grep`/`head` returning
   non-zero (no match, SIGPIPE) aborts a chained script. Keep verification
   `grep`s out of release sequences, or append `|| true`.
