@@ -180,6 +180,22 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   no `name`** (Viking Line's booking selectors — the visible fields are display
   shells; the real state lives in the framework, so `fill` and DOM value-setting
   do nothing at all).
+- **There is NO way to send real keystrokes, and `fill --native` is not one.** `--native` uses CDP
+  `Input.insertText`, which fires `beforeinput`/`input` but **never `keydown`**. A combobox that
+  filters its list on keystrokes therefore stays empty: the value lands in the DOM and no options
+  ever render. npm’s "Select packages and scopes" picker is the canonical case (2026-08-22) — the
+  field showed `generativereality` and the list stayed blank through `fill`, `fill --native`, and a
+  React native-setter `eval`. There is no `press` or `type` command to escalate to.
+  ⇒ Drop to raw CDP on the tab’s `webSocketDebuggerUrl` and dispatch `Input.dispatchKeyEvent`
+  per character. Two traps, both hit:
+  **(1) `keyDown` carrying `text` already inserts the character** — sending a `char` event as well
+  types everything twice (`ggeenneerraattiivvee…`), which reads as a flaky page rather than a double
+  dispatch. Send `keyDown` + `keyUp` only.
+  **(2) Clear with real Backspaces, not select-all+Delete.** A value written by a JS setter is
+  invisible to the component’s own state, so the framework keeps the old string and you end up
+  appending to it. Backspacing drives the same path a person would.
+  Also: the dropdown must actually be **open** first — typing into a collapsed picker’s hidden input
+  does nothing, and looks identical to the events not landing.
   **Do NOT hand-roll a raw-CDP trusted click.** Burned 2026-08-22: wrote a
   bespoke `Input.dispatchMouseEvent` helper for exactly this, and it clicked
   stale coordinates (the panel had animated in) — `--trusted` already solves that
