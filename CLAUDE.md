@@ -125,4 +125,9 @@ breaks releases.
 - `src/core/session.ts` — per-session JSON under `~/.browser-automation/sessions/`.
 - `src/core/{download,network}.ts` — download capture + network inspection.
 - `skills/browser/SKILL.md` — the Claude Code skill (synced to `generativereality/plugins`).
+- `skills/browser/references/*.md` — the skill's long reference material (renderer health,
+  input/forms/uploads, contributing), linked from SKILL.md. **SKILL.md stays under 500
+  lines** — marketplace skill lints reject longer ones — so a long new gotcha
+  goes in a reference file with a one-paragraph rule and a pointer left in SKILL.md.
+  `sync-plugin.sh` ships every file in `references/`.
 - `.claude-plugin/plugin.json` — manifest; version must match `package.json`.

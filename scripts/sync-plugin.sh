@@ -30,7 +30,13 @@ PAYLOAD_FILES=(
   "skills/browser/SKILL.md"
   ".claude-plugin/plugin.json"
   "scripts/launch-chrome.sh"
+  "LICENSE"
 )
+# SKILL.md links to these for its long reference material; a payload without
+# them leaves the skill pointing at files that are not there.
+for f in "$REPO_ROOT"/skills/browser/references/*.md; do
+  [ -e "$f" ] && PAYLOAD_FILES+=("skills/browser/references/$(basename "$f")")
+done
 
 for rel in "${PAYLOAD_FILES[@]}"; do
   if ! diff -q "$REPO_ROOT/$rel" "$PLUGINS_DIR/plugins/browser-automation/$rel" >/dev/null 2>&1; then
