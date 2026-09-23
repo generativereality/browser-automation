@@ -179,6 +179,10 @@ if [ "$RESTART" = "1" ] && port_is_ours; then
   if port_is_ours; then
     if profile_released; then
       echo "Chrome released its profile but left its process running (normal on macOS); ending it."
+    elif ! ls "$PROFILE" >/dev/null 2>&1; then
+      # Not evidence of a hung Chrome — we simply cannot look. It has had 10s
+      # since being asked to quit, which is ample for a release we cannot see.
+      echo "Cannot see ${PROFILE} from this app (macOS keeps Chrome's folder from it), so cannot confirm it was released; ending Chrome after 10s." >&2
     else
       echo "Chrome still held its profile after 10s; sending SIGKILL." >&2
     fi

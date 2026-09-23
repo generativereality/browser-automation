@@ -474,9 +474,15 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
      process helps; closing tabs does not, and plain `launch` will not either (idempotent by
      design — it sees a live browser and exits happy):
      ```bash
-     browser-automation launch --restart    # SIGTERM (profile flushes cleanly), wait, relaunch
+     browser-automation launch --restart    # quit (CDP, then SIGTERM), wait for the profile, relaunch
      ```
-     It reports how many tabs it is about to close. **Those tabs belong to every parallel
+     It reports how many tabs it is about to close. `Chrome released its profile but left its
+     process running (normal on macOS); ending it.` is the **expected** line, not a fault: on
+     macOS 27 / Chrome 153 the browser process never exits on its own after quitting, but it
+     does flush and release the profile first, and that release is what the restart waits for.
+     (Older CLIs waited only for the port to close and relaunched on top of the still-running
+     Chrome — two browsers on one profile. If you see `Chrome did not exit on SIGTERM`, or no
+     such line and then odd profile errors, you are on one of those.) **Those tabs belong to every parallel
      Claude Code session sharing this Chrome — ask Fred first, never restart unilaterally.**
 
   **Housekeeping is a different problem** — `browser-automation gc` prunes stale session bookmarks
@@ -612,6 +618,26 @@ working around it forever**:
   If it says the port is held by ANOTHER user, that is not your Chrome and
   driving it would act in their session — quit Chrome in that account, or set
   `BROWSER_AUTOMATION_PORT`.
+- **`SingletonLock: Operation not permitted` / "Failed to create a ProcessSingleton"**
+  → macOS refused the app this session runs under access to **Chrome's** folder,
+  where old CLIs kept the profile (see Setup). Not a stale lock; do not delete
+  anything. Upgrade the CLI (`npm install -g @generativereality/browser-automation@latest`)
+  and `launch` again: current versions start Chrome through `open(1)`, under
+  Chrome's own identity, so it opens its folder whatever app you run under, and
+  they move the profile to `~/.browser-automation/` when they can.
+
+  **What to tell the person — and what NOT to.** ⛔ **Do not ask them to grant
+  Full Disk Access** (to the app, to the terminal, to anything). It does work, and
+  it hands that app every file on the Mac to fix a problem that needs none of it:
+  an agent in Mind My Money said exactly that on 2026-09 — *"let Mind My Money
+  reach that folder. Full Disk Access does it, but it also opens far more than
+  Chrome"* — when the real fix was a CLI upgrade. Also do not suggest a fresh
+  profile or `BROWSER_AUTOMATION_PROFILE` pointed at an empty folder: that signs
+  them out of every bank and portal. If `launch` still reports `Profile not moved`
+  after upgrading, the browser works anyway (the old folder is still used); the
+  one-time move needs a host macOS allows into Chrome's folder, so the ask is small
+  and exact: *open Terminal and run `browser-automation profile --migrate`; if macOS
+  asks whether Terminal may access data from other apps, allow it.*
 - **`command not found: browser-automation`** → `npm install -g @generativereality/browser-automation`.
 - **Chrome was restarted** → nothing to do; the next `goto` recreates the
   session's tab automatically (sessions self-heal; `list` shows `stale`).
