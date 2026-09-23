@@ -3,8 +3,9 @@ import { consola } from 'consola'
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { launchScriptPath } from '../core/paths.js'
-import { cdpPort } from '../core/cdp.js'
+import { cdpPort, closeBrowser, listPageTargets } from '../core/cdp.js'
 import { probeRenderer, explainRendererFailure, chromeLogPath } from '../core/renderer-health.js'
+import { migrateProfile, resolveProfile } from '../core/profile.js'
 
 export const launchCommand = define({
   name: 'launch',
@@ -25,16 +26,41 @@ export const launchCommand = define({
     // `--restart` is destructive to every session sharing this browser, so it
     // is never implied — not by a failed launch, not by an unhealthy doctor.
     // Something has to type it.
-    const args = [
-      '--port', String(cdpPort()),
-      ...(ctx.values.status ? ['--status'] : []),
-      ...(ctx.values.restart ? ['--restart'] : []),
-    ]
-    const r = spawnSync('bash', [script, ...args], { stdio: 'inherit' })
+    const port = ['--port', String(cdpPort())]
+    const bash = (extra: string[]) => spawnSync('bash', [script, ...port, ...extra], { stdio: 'inherit' })
 
-    // `--status` asks a deliberately cheaper question — "is anything serving
-    // this port" — and callers use its exit code as a boolean. Leave it alone.
-    if (r.status !== 0 || ctx.values.status) process.exit(r.status ?? 1)
+    // `--status` asks only about the port; it neither moves nor opens anything.
+    if (ctx.values.status) process.exit(bash(['--status']).status ?? 1)
+
+    // **Quit before moving.** A profile is never moved underneath a running
+    // Chrome, so a restart stops it first, then migrates, then launches — which
+    // makes `launch --restart` the way to move a profile that is in use now.
+    if (ctx.values.restart) {
+      // Quit cleanly over CDP first; `--stop` then waits for the process and
+      // only signals it if it is still there. A Chrome that is not answering
+      // (the usual reason to restart) just falls through to the signals.
+      // Count first: once it is asked to quit there is nothing left to count,
+      // and "how many tabs am I closing" is the one thing to say before doing it.
+      const tabs = await listPageTargets().then((t) => t.length).catch(() => null)
+      if (tabs !== null) consola.info(`Restarting Chrome on :${cdpPort()} — closing ${tabs} open tab(s).`)
+      await closeBrowser().catch(() => {})
+      const stop = bash(['--stop', '--profile', resolveProfile().dir])
+      if (stop.status !== 0) process.exit(stop.status ?? 1)
+    }
+
+    // **Move the profile out of Chrome's own folder, if it is still there.**
+    // See core/profile.ts: inside Google Chrome's app-data container, an
+    // app-hosted session is refused by macOS and Chrome dies on its own
+    // SingletonLock. Every outcome hands back a profile that holds the logins;
+    // a refused move keeps the old folder working rather than starting fresh.
+    const m = migrateProfile()
+    if (m.outcome === 'moved') consola.success(`Profile ${m.detail} — logins travel with it.`)
+    else if (m.outcome === 'refused' || m.outcome === 'failed') consola.warn(`Profile not moved: ${m.detail}`)
+    else if (m.outcome === 'in-use') consola.info(`Profile not moved yet: ${m.detail}`)
+
+    const r = bash(['--profile', m.dir])
+
+    if (r.status !== 0) process.exit(r.status ?? 1)
 
     // **"Already running" is not a health check, so do the health check.**
     //

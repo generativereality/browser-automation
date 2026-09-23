@@ -1,13 +1,11 @@
 import { define } from 'gunshi'
 import { consola } from 'consola'
-import { homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { cdpHost, cdpPort, listTargets } from '../core/cdp.js'
 import { listSessions } from '../core/session.js'
+import { resolveProfile } from '../core/profile.js'
 import { probeRenderer, explainRendererFailure, gatherEvidence, recentProbeStats, chromeLogPath } from '../core/renderer-health.js'
 
-const PROFILE = process.env.BROWSER_AUTOMATION_PROFILE
-  || `${homedir()}/Library/Application Support/Google/Chrome/browser-automation`
 
 /**
  * Does a Chrome THIS user started serve our CDP port?
@@ -45,7 +43,15 @@ export const doctorCommand = define({
     else bad(`Node ${process.versions.node} — need >= 22 for the global WebSocket CDP client`)
 
     consola.log(`  • CDP host: ${cdpHost()} (port ${cdpPort()} — derived from uid ${process.getuid?.() ?? '?'})`)
-    consola.log(`  • Profile:  ${PROFILE}`)
+    const profile = resolveProfile()
+    consola.log(`  • Profile:  ${profile.dir}`)
+    if (profile.source === 'legacy') {
+      // Still inside Chrome's own app-data folder. Works from a host macOS has
+      // allowed into it (a terminal, usually) and fails with a misleading
+      // SingletonLock error from one it has not (an app spawning the agent).
+      consola.log(`    ⚠ still inside Chrome's own folder, which an app-hosted session may be refused.`)
+      consola.log(`      Move it (logins included): browser-automation profile --migrate`)
+    }
 
     // **Whose browser is this?** The failure this exists for is invisible
     // without asking: another account's Chrome answers every request

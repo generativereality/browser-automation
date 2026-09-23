@@ -55,12 +55,18 @@ ask_cli_for_port() {
 }
 
 PORT=""
+PROFILE=""
 RESTART=0
+STOP_ONLY=0
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --port) PORT="${2:-}"; shift 2 ;;
+    --profile) PROFILE="${2:-}"; shift 2 ;;
     --restart) RESTART=1; shift ;;
+    # Quit our Chrome and stop there. `launch --restart` uses it so the profile
+    # can be moved while nothing has it open, before the relaunch.
+    --stop) RESTART=1; STOP_ONLY=1; shift ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
@@ -73,7 +79,23 @@ if [ -z "${PORT}" ]; then
   exit 1
 fi
 
-PROFILE="${BROWSER_AUTOMATION_PROFILE:-$HOME/Library/Application Support/Google/Chrome/browser-automation}"
+# **Asked for, never hardcoded** — same reason as the port. `resolveProfile()`
+# in src/core/profile.ts decides it (and knows about the move out of Chrome's
+# own folder); the CLI passes it with --profile, and a person running this by
+# hand gets the same answer from `browser-automation profile`.
+ask_cli_for_profile() {
+  local dist="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/dist/index.js"
+  if [ -f "$dist" ] && command -v node >/dev/null 2>&1; then
+    node "$dist" profile 2>/dev/null && return 0
+  fi
+  command -v browser-automation >/dev/null 2>&1 && browser-automation profile 2>/dev/null
+}
+PROFILE="${PROFILE:-$(ask_cli_for_profile || true)}"
+if [ -z "${PROFILE}" ]; then
+  echo "Error: could not work out which profile to use — pass --profile, or set" >&2
+  echo "       BROWSER_AUTOMATION_PROFILE." >&2
+  exit 1
+fi
 # Under the caller's OWN temp dir: /tmp is shared and sticky, so with a
 # machine-global name the second user cannot write the first user's log.
 LOG="${BROWSER_AUTOMATION_LOG:-${TMPDIR:-/tmp}/chrome-${PORT}.log}"
@@ -119,27 +141,70 @@ fi
 # profile (cookies, extension state, session) on a clean quit, and that profile
 # is the whole reason this browser is long-lived. Only escalate if it will not
 # go, and say so when it happens.
-if [ "$RESTART" = "1" ] && is_up; then
+if [ "$RESTART" = "1" ] && port_is_ours; then
   if ! port_is_ours; then
     echo "Error: refusing to restart a Chrome this account did not start." >&2
     exit 1
   fi
-  TABS="$(curl -fs "http://localhost:${PORT}/json/list" 2>/dev/null | grep -c '"type": "page"' || true)"
-  echo "Restarting Chrome on :${PORT} — closing ${TABS:-?} open tab(s)."
+  if is_up; then
+    TABS="$(curl -fs "http://localhost:${PORT}/json/list" 2>/dev/null | grep -c '"type": "page"' || true)"
+    echo "Restarting Chrome on :${PORT} — closing ${TABS:-?} open tab(s)."
+  fi
   pkill -u "$(id -u)" -f -- "--remote-debugging-port=${PORT}" 2>/dev/null || true
+  # **Wait for Chrome to let go of the PROFILE, not for the port to close.**
+  #
+  # Chrome shuts its DevTools listener and helpers early in shutdown, so a
+  # closed port says nothing. Waiting on it relaunched on top of a Chrome still
+  # holding the profile: two browsers with one profile open, the corruption
+  # Chrome's SingletonLock exists to prevent.
+  #
+  # Nor can we wait for the process to exit. Measured 2026-09-23 on macOS 27 /
+  # Chrome 153: after SIGTERM or CDP Browser.close the browser process NEVER
+  # exits — still asleep after a minute, every restart, however launched. It has
+  # done the part that matters, though: SingletonLock is gone, i.e. the profile
+  # is flushed and released, and what is left is a Mac app with no windows.
+  # Ending that is harmless. Ending a Chrome that still holds the lock is not.
+  profile_released() {
+    # Only if we can actually SEE the profile. A host macOS has refused
+    # Chrome's folder cannot, and "no lock visible" would then read as
+    # "released" and kill a Chrome mid-flush.
+    ls "$PROFILE" >/dev/null 2>&1 || return 1
+    [ ! -L "$PROFILE/SingletonLock" ] && [ ! -e "$PROFILE/SingletonLock" ]
+  }
   for _ in $(seq 1 40); do
-    is_up || break
+    port_is_ours || break
+    profile_released && break
     sleep 0.25
   done
-  if is_up; then
-    echo "Chrome did not quit on SIGTERM after 10s; sending SIGKILL." >&2
+  if port_is_ours; then
+    if profile_released; then
+      echo "Chrome released its profile but left its process running (normal on macOS); ending it."
+    elif ! ls "$PROFILE" >/dev/null 2>&1; then
+      # Not evidence of a hung Chrome — we simply cannot look. It has had 10s
+      # since being asked to quit, which is ample for a release we cannot see.
+      echo "Cannot see ${PROFILE} from this app (macOS keeps Chrome's folder from it), so cannot confirm it was released; ending Chrome after 10s." >&2
+    else
+      echo "Chrome still held its profile after 10s; sending SIGKILL." >&2
+    fi
     pkill -9 -u "$(id -u)" -f -- "--remote-debugging-port=${PORT}" 2>/dev/null || true
-    sleep 2
+    for _ in $(seq 1 20); do
+      port_is_ours || break
+      sleep 0.25
+    done
+  fi
+  if port_is_ours; then
+    echo "Error: Chrome on :${PORT} would not exit, even on SIGKILL. Not relaunching on top of it." >&2
+    exit 1
   fi
   # Chrome unregisters its bootstrap names and releases the port on the way out;
   # relaunching before that finishes produces a second browser that cannot serve
   # CDP. A short settle beats a confusing race.
   sleep 1
+fi
+
+if [ "$STOP_ONLY" = "1" ]; then
+  port_is_ours && { echo "Error: Chrome on :${PORT} is still running." >&2; exit 1; }
+  exit 0
 fi
 
 # A held port is the ONLY thing this branch establishes. It is emphatically not
