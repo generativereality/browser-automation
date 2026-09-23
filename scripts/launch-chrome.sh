@@ -193,23 +193,64 @@ if [ -s "$LOG" ]; then
   mv -f "$LOG" "${LOG}.prev" 2>/dev/null || true
 fi
 
-nohup "$CHROME" \
-  --remote-debugging-port="$PORT" \
-  --user-data-dir="$PROFILE" \
-  --no-first-run \
-  --no-default-browser-check \
-  'about:blank' >"$LOG" 2>&1 &
-disown
+# On macOS, launch the .app through open(1), never by exec'ing the binary inside
+# it. macOS protects an application's own data directory under
+# ~/Library/Application Support, and the default profile lives under
+# .../Google/Chrome. A process started from a terminal is refused there — for
+# reads as well as writes — so a directly exec'd Chrome cannot even create its
+# own SingletonLock and aborts with "Failed to create a ProcessSingleton for
+# your profile directory". The message names the lock, so it reads as a stale
+# lock from a crashed Chrome; it is not. Measured 2026-09-18 on Darwin 27.0.0
+# with Chrome 153: the profile dir was mode 0700, owned by the user, carried no
+# BSD flags and held no Singleton* files, while ~/Library/Application Support
+# and .../Google both accepted writes from the same shell. LaunchServices gives
+# Chrome its own identity, and the same binary, profile and flags then start.
+#
+# -n: a new instance even when the user's everyday Chrome is running.
+# -g: do not bring it to the front. Chrome's stdout/stderr still reach $LOG via
+# --stdout/--stderr (a healthy start writes "DevTools listening on ws://…").
+app_bundle_of() {
+  case "$1" in
+    *.app/Contents/MacOS/*) printf '%s.app\n' "${1%%.app/Contents/MacOS/*}" ;;
+    *) return 1 ;;
+  esac
+}
 
-# Wait briefly for CDP to come up so the caller can attach immediately.
-for _ in $(seq 1 20); do
+CHROME_FLAGS=(
+  --remote-debugging-port="$PORT"
+  --user-data-dir="$PROFILE"
+  --no-first-run
+  --no-default-browser-check
+  'about:blank'
+)
+if [ "$(uname -s)" = "Darwin" ] && APP="$(app_bundle_of "$CHROME")"; then
+  open -n -g -a "$APP" --stdout "$LOG" --stderr "$LOG" --args "${CHROME_FLAGS[@]}"
+else
+  nohup "$CHROME" "${CHROME_FLAGS[@]}" >"$LOG" 2>&1 &
+  disown
+fi
+
+# Wait for CDP so the caller can attach immediately. A cold start against a
+# long-lived profile (extensions, logins, restored session) measured 10.6s and
+# 16.4s through open(1), so a 5s window reported failure over a browser that
+# was still coming up. The elapsed time is printed so a window that is too
+# short again is visible rather than guessed at.
+START="$(date +%s)"
+for _ in $(seq 1 240); do
   if is_up; then
-    echo "Chrome launched on :${PORT} (profile: ${PROFILE}, log: ${LOG})"
+    echo "Chrome launched on :${PORT} in $(( $(date +%s) - START ))s (profile: ${PROFILE}, log: ${LOG})"
     echo "Drive it with: browser-automation goto -s <session> <url>"
     exit 0
   fi
   sleep 0.25
 done
 
-echo "Error: Chrome did not start within 5s. Check ${LOG}." >&2
+echo "Error: Chrome did not serve CDP on :${PORT} within 60s. Last lines of ${LOG}:" >&2
+tail -n 8 "$LOG" 2>/dev/null | sed 's/^/  /' >&2
+if grep -qE 'Failed to create a ProcessSingleton|SingletonLock: Operation not permitted' "$LOG" 2>/dev/null; then
+  echo "" >&2
+  echo "macOS refused this Chrome its own profile directory — not a stale lock." >&2
+  echo "Chrome was exec'd directly rather than launched through open(1); see the" >&2
+  echo "comment above app_bundle_of in this script." >&2
+fi
 exit 1
