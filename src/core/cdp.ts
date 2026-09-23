@@ -249,6 +249,23 @@ export async function activateTab(targetId: string): Promise<void> {
   })
 }
 
+/**
+ * Ask Chrome to quit, the way its own menu does.
+ *
+ * `launch --restart` used to rely on SIGTERM, and on macOS 27 / Chrome 153 the
+ * browser process never exits on it: the DevTools port and helpers go, the
+ * process stays asleep. Measured 2026-09-23, every restart of every Chrome,
+ * however launched. The script then escalates to SIGKILL, which skips the
+ * profile flush that keeps the logins — so quit it properly first and leave the
+ * signals as the fallback. Resolves once the request is sent; the connection
+ * dropping as Chrome goes is the expected outcome, not an error.
+ */
+export async function closeBrowser(): Promise<void> {
+  await withBrowser(async (s) => {
+    await s.send('Browser.close', {}, 3000).catch(() => {})
+  }, 3000)
+}
+
 export async function closeTab(targetId: string): Promise<boolean> {
   return withBrowser(async (s) => {
     const r = await s.send('Target.closeTarget', { targetId })

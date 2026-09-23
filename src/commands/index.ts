@@ -22,6 +22,7 @@ import { launchCommand } from './launch.js'
 import { doctorCommand } from './doctor.js'
 import { gcCommand } from './gc.js'
 import { portCommand } from './port.js'
+import { profileCommand } from './profile.js'
 
 const defaultCommand = define({
   name: 'browser-automation',
@@ -58,6 +59,7 @@ const subCommands = new Map<string, Command<any>>([
   ['gc', gcCommand],
   ['prune', gcCommand],
   ['port', portCommand],
+  ['profile', profileCommand],
 ])
 
 // The positionals gunshi sees are placeholders (see core/argv.ts). Each

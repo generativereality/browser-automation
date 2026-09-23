@@ -85,6 +85,34 @@ one of those; run `doctor`, which is the same probe.** Override the profile path
 with `BROWSER_AUTOMATION_PROFILE=...` and the CDP host with
 `BROWSER_AUTOMATION_CDP=http://localhost:PORT` if needed.
 
+**The profile lives in `~/.browser-automation/chrome-profile`** (`browser-automation
+profile` prints it). Older CLIs kept it inside Chrome's own folder,
+`~/Library/Application Support/Google/Chrome/browser-automation`, and `launch` moves
+it out the first time it can — logins included; the move is a single rename and
+Chrome's cookie key lives in the Keychain, not in the path. To move it on demand:
+
+```bash
+browser-automation profile --migrate    # refuses, changing nothing, if a Chrome has it open
+browser-automation launch --restart     # quits Chrome first, then moves it and relaunches
+```
+
+**Why it moved: macOS decides access to Chrome's folder per HOST app.** A session
+started from a terminal that was once allowed reaches it; one started by an app
+that was not — Clerk.AI, denied in 2026-08 and silently refused ever since — gets
+`EPERM`, and Chrome dies with
+
+```
+Failed to create …/browser-automation/SingletonLock: Operation not permitted (1)
+Failed to create a ProcessSingleton for your profile directory. … Aborting now
+```
+
+**That is not a stale lock**, and there is no lock file to delete. It is also why
+the same command works from your terminal and fails from an app. ⛔ **Do not work
+around it with a scratch `--user-data-dir` or `BROWSER_AUTOMATION_PROFILE` pointed
+at an empty folder**: Chrome starts, and the person is signed out of every site in
+the real profile. Run `browser-automation profile --migrate` once from a terminal
+that can reach the old folder; every host reaches the new one.
+
 ## Commands
 
 Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, else
@@ -94,6 +122,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 |---|---|
 | Start the Chrome + verify it can make renderers | `browser-automation launch` |
 | Diagnose setup (incl. renderer capacity) | `browser-automation doctor` |
+| Where the Chrome profile lives / move it out of Chrome's folder | `browser-automation profile` / `profile --migrate` |
 | List sessions + every open tab (id, title, url) | `browser-automation list` |
 | Open a background tab | `browser-automation new -s work [url]` |
 | Navigate (session tab created if needed) | `browser-automation goto -s work https://example.com` |

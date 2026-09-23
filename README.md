@@ -180,7 +180,7 @@ same one-action-per-snapshot rule as Playwright refs.
   repeats a rule is a copy of it, and goes stale the same way code does.
   `doctor` prints it too, and warns if another user holds it.
 - `BROWSER_AUTOMATION_CDP` — full CDP host, overriding the port entirely.
-- `BROWSER_AUTOMATION_PROFILE` — Chrome profile dir for `launch`.
+- `BROWSER_AUTOMATION_PROFILE` — Chrome profile dir for `launch`. Default `~/.browser-automation/chrome-profile`; a profile still at the old location inside Chrome's own folder is moved there on launch (`browser-automation profile --migrate` to do it by hand).
 - `BAC_SESSION` — default session name for page commands.
 
 ## License
