@@ -42,10 +42,15 @@ browser-automation doctor     # verify (incl. renderer capacity)
 Claude Code skill (so the agent knows how to use it):
 
 ```bash
-mkdir -p .claude/skills/browser
-curl -fsSL https://raw.githubusercontent.com/generativereality/browser-automation/main/skills/browser/SKILL.md \
-  -o .claude/skills/browser/SKILL.md
+mkdir -p .claude/skills/browser/references
+base=https://raw.githubusercontent.com/generativereality/browser-automation/master/skills/browser
+for f in SKILL.md references/input-and-forms.md references/renderer-health.md references/contributing.md; do
+  curl -fsSL "$base/$f" -o ".claude/skills/browser/$f"
+done
 ```
+
+The skill is `SKILL.md` plus the `references/` files it points to for the long
+troubleshooting and hard cases; copy all of them.
 
 …or install the plugin from the marketplace:
 
@@ -185,4 +190,4 @@ same one-action-per-snapshot rule as Playwright refs.
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).
