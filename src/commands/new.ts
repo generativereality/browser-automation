@@ -5,6 +5,7 @@ import { normalizeUrl } from '../core/target.js'
 import { createTab } from '../core/cdp.js'
 import { ensureRenderer } from '../core/renderer-wake.js'
 import { probeRenderer, explainRendererFailure, withRendererDiagnosis } from '../core/renderer-health.js'
+import { wantsShow, showTab, describeNotShown } from '../core/show.js'
 
 export const newCommand = define({
   name: 'new',
@@ -12,6 +13,10 @@ export const newCommand = define({
   args: {
     session: { type: 'string', short: 's', description: 'Session name (default: $BAC_SESSION or "default")' },
     force: { type: 'boolean', short: 'f', description: 'Open a new tab even if the session already has one' },
+    show: {
+      type: 'boolean',
+      description: 'Make this the SELECTED tab in its Chrome window, so someone watching Chrome sees it — only when the automation Chrome is already the frontmost app, so it never brings Chrome over another app. Default on with BAC_SHOW_TAB=1.',
+    },
   },
   async run(ctx) {
     const name = ctx.values.session || defaultSessionName()
@@ -51,6 +56,15 @@ export const newCommand = define({
       // renderers, so this is about this tab, not about Chrome.
       consola.warn(`[${name}] tab ${targetId.slice(0, 12)}… did not answer yet (${r.reason ?? r.outcome}). Chrome can still create renderers, so this is likely transient — retry the next command.`)
     }
-    consola.success(`[${name}] opened background tab ${targetId.slice(0, 12)}… → ${url}`)
+    // Opened in the background, as always; selected afterwards only if that
+    // raises nothing (core/show.ts).
+    let shown = false
+    if (wantsShow(ctx.values.show)) {
+      const outcome = await showTab(targetId).catch(() => 'unsupported' as const)
+      shown = outcome === 'shown'
+      const note = describeNotShown(outcome)
+      if (note) consola.info(note)
+    }
+    consola.success(`[${name}] opened ${shown ? 'and showed' : 'background'} tab ${targetId.slice(0, 12)}… → ${url}`)
   },
 })

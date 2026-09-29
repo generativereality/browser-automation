@@ -46,6 +46,24 @@ file under `~/.browser-automation/sessions/`.
   `focus --raise`, which calls `Target.activateTarget` and **genuinely takes the
   operator's screen**. `--raise` is the only one that does; reach for plain
   `focus` unless a person needs to see the tab.
+- **Show the work: `--show` / `BAC_SHOW_TAB=1`.** A person watching the Chrome
+  window sees whichever tab is SELECTED, and the tabs you work in are background
+  tabs — so by default they watch one stale page while titles change elsewhere
+  (filmed: eleven minutes on one tab during a real round). `goto --show` and
+  `new --show` make your tab the selected one; `export BAC_SHOW_TAB=1` turns it
+  on for every `goto`/`new` in the shell, so a skill sets it once.
+  **It only selects when the automation Chrome is already the frontmost app**,
+  and otherwise does nothing and says `Tab not shown: another app … is in front`.
+  That is the design, not a limitation to work around: on current Chrome every
+  way of selecting a tab from outside (`Target.activateTarget`,
+  `Page.bringToFront`, `/json/activate`, a foreground `new`, `window.open`)
+  also brings Chrome in front of whatever the person is using — measured
+  2026-09-29. When Chrome is already in front nothing gets raised, which is the
+  case of someone watching it. The person's everyday Chrome counts as "another
+  app": it is checked by process, not by name. ⛔ Do not reach for `focus --raise`
+  to "make it show" — that is the screen-taking version; keep it for the moments
+  a person must look (a sign-in, a CAPTCHA). macOS only; elsewhere `--show`
+  reports that it cannot tell and does nothing.
 - **Self-healing.** If the tab was closed (or Chrome restarted and reissued
   targetIds), the next `goto` just opens a fresh background tab for that session.
 - **Refs live in the DOM.** `snapshot` stamps `data-ba-ref="e7"` onto each
@@ -140,6 +158,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Inspect network (find the API, headers, bodies) | `browser-automation network -m bank --reload --filter api --headers --body` |
 | Screenshot a tab | `browser-automation screenshot -m op.fi --full -o shot.png` |
 | Make a hidden tab render (charts, video, polling) | `browser-automation focus -s work` (add `--raise` to really front it) |
+| Let a person watching Chrome see the tab you work in | `goto --show` / `new --show`, or `export BAC_SHOW_TAB=1` once |
 | Prune stale session bookmarks + dead tabs | `browser-automation gc --dry` (then without `--dry`) |
 | Restart Chrome (LAST resort — closes ALL tabs, for EVERY session; only once `doctor` confirms the Mach name is absent) | `browser-automation launch --restart` |
 | Forget a session (tab stays open) | `browser-automation close -s work` |

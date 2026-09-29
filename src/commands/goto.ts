@@ -7,6 +7,7 @@ import { targetArgs, targetOpts } from '../core/args.js'
 import { navigate } from '../core/cdp.js'
 import { ensureRenderer } from '../core/renderer-wake.js'
 import { withRendererDiagnosis } from '../core/renderer-health.js'
+import { wantsShow, showTab, describeNotShown } from '../core/show.js'
 
 export const gotoCommand = define({
   name: 'goto',
@@ -14,6 +15,10 @@ export const gotoCommand = define({
   args: {
     ...targetArgs,
     url: { type: 'positional', description: 'URL to navigate to' },
+    show: {
+      type: 'boolean',
+      description: 'Make this the SELECTED tab in its Chrome window, so someone watching Chrome sees it — only when the automation Chrome is already the frontmost app, so it never brings Chrome over another app. Default on with BAC_SHOW_TAB=1.',
+    },
   },
   async run(ctx) {
     const url = ctx.positionals[1]
@@ -47,6 +52,13 @@ export const gotoCommand = define({
         `No load event arrived, so the page may still be loading. The navigation `
         + `itself was accepted; this is a statement about what could not be confirmed.`,
       )
+    }
+
+    // After the navigation, so the tab someone sees is the page, not a blank
+    // one about to change. See core/show.ts for why only when Chrome is in front.
+    if (wantsShow(ctx.values.show)) {
+      const note = describeNotShown(await showTab(targetId).catch(() => 'unsupported' as const))
+      if (note) consola.info(note)
     }
 
     // Persist the binding only in pure session mode (no explicit -m/-t).
