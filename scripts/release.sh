@@ -170,7 +170,16 @@ finish() {
   BA_PLUGIN_SOURCE="$RELEASE_WT" bash "$ROOT/scripts/sync-plugin.sh"
 
   say "This machine"
-  npm install -g "$PKG@$v" >/dev/null 2>&1 && echo "  installed $(browser-automation --version)"
+  # --prefer-online: npm caches the package's metadata, so right after a
+  # publish `npm install -g pkg@<new>` answers ETARGET "No matching version"
+  # for a version the registry is already serving (0.4.17: the version
+  # endpoint said 200, install said notarget). And say when it fails — this
+  # line used to swallow that and print nothing.
+  if npm install -g --prefer-online "$PKG@$v" >/dev/null 2>&1; then
+    echo "  installed $(browser-automation --version)"
+  else
+    echo "  ⚠ could not install $PKG@$v globally — run: npm install -g --prefer-online $PKG@$v" >&2
+  fi
 
   say "Downstream — not done by this script"
   cat <<TXT
