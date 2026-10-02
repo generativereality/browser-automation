@@ -134,8 +134,16 @@ TXT
 finish() {
   git fetch -q origin --tags
   local tag; tag="$(last_tag)"; local v="${tag#v}"
-  local run; run="$(gh run list --repo "$REPO" --workflow release.yml --branch "$tag" --limit 1 --json databaseId --jq '.[0].databaseId')"
-  [ -n "$run" ] || die "no release run for $tag"
+  # GitHub's run LISTING lags the run: at 0.4.18 `gh run list --branch <tag>`
+  # answered nothing for minutes while `gh run view <id>` said success — so
+  # finish died "no release run" twice on a release that had shipped. Retry.
+  local run=""
+  for _ in $(seq 1 18); do
+    run="$(gh run list --repo "$REPO" --workflow release.yml --branch "$tag" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+    [ -n "$run" ] && break
+    sleep 10
+  done
+  [ -n "$run" ] || die "no release run for $tag after 3 minutes"
 
   say "Waiting for the release run of $tag"
   local s
