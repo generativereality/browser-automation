@@ -286,9 +286,15 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
 - **Page still loading.** `goto` waits for the load event, but SPAs render after.
   If a `read`/`snapshot` looks empty, re-run after a moment, or snapshot again
   once a known element should be present.
-- **`launch` is macOS/Linux only** (resolves the Chrome binary per-OS). On other
-  setups, start Chrome manually with `--remote-debugging-port=<doctor's port>
-  --user-data-dir="<profile>"`.
+- **`launch` works on macOS, Linux and Windows.** On Windows it needs only Node
+  (no Git Bash): it finds `chrome.exe` in Program Files or `%LOCALAPPDATA%`
+  (override with `BROWSER_AUTOMATION_CHROME`), uses the same profile
+  (`%USERPROFILE%\.browser-automation\chrome-profile`) and the same rules —
+  idempotent, refuses a port held by a Chrome this account did not start, and
+  `--restart` quits Chrome cleanly so the logins survive. ⛔ So do not start
+  Chrome by hand on Windows any more; that was the workaround for CLIs older than
+  0.4.18, which refused with `unsupported OS MINGW64_NT`. A cold start brings
+  Chrome to the front once, on every platform.
 
 ## Network insights — find the API behind a page
 

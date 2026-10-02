@@ -170,7 +170,8 @@ same one-action-per-snapshot rule as Playwright refs.
   button inside the zone works even when the zone div itself isn't
   snapshot-interactive. After dropping, confirm with `read`/`screenshot` and pull
   the result (often a `download --url` endpoint).
-- `launch` resolves Chrome on macOS/Linux; elsewhere start Chrome manually with
+- `launch` works on macOS, Linux and Windows (on Windows it needs only Node; set
+  `BROWSER_AUTOMATION_CHROME` if `chrome.exe` is somewhere unusual). Anywhere else, start Chrome with
   `--remote-debugging-port=<your port> --user-data-dir="<profile>"` — `browser-automation doctor` prints the port.
 
 ## Environment

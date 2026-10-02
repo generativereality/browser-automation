@@ -6,6 +6,7 @@ import { launchScriptPath } from '../core/paths.js'
 import { cdpPort, closeBrowser, listPageTargets } from '../core/cdp.js'
 import { probeRenderer, explainRendererFailure, chromeLogPath } from '../core/renderer-health.js'
 import { migrateProfile, resolveProfile } from '../core/profile.js'
+import { cdpUp, startChrome, stopOurChrome } from '../core/launch-windows.js'
 
 export const launchCommand = define({
   name: 'launch',
@@ -15,6 +16,14 @@ export const launchCommand = define({
     restart: { type: 'boolean', description: 'Quit this user\'s running Chrome first, then launch. CLOSES ALL ITS TABS — the only recovery for a browser that can no longer launch renderers (see `doctor`).' },
   },
   async run(ctx) {
+    // **Windows has its own path** (core/launch-windows.ts): the launch script
+    // is POSIX (open, pgrep, pkill, nohup) and under Git Bash it refused with
+    // "unsupported OS MINGW64_NT", so agents started Chrome by hand.
+    if (process.platform === 'win32') {
+      const ok = await launchWindows(ctx.values.status === true, ctx.values.restart === true)
+      if (!ok) process.exit(1)
+      if (ctx.values.status) return
+    } else {
     const script = launchScriptPath()
     if (!existsSync(script)) {
       consola.error(`launch-chrome.sh not found at ${script}. Reinstall the package.`)
@@ -61,6 +70,7 @@ export const launchCommand = define({
     const r = bash(['--profile', m.dir])
 
     if (r.status !== 0) process.exit(r.status ?? 1)
+    }
 
     // **"Already running" is not a health check, so do the health check.**
     //
@@ -109,3 +119,63 @@ export const launchCommand = define({
     process.exit(1)
   },
 })
+
+/**
+ * Windows: the launch script's contract in TypeScript. Prints the same lines
+ * the script prints, so an agent reading either learns the same thing.
+ * Returns false on a failure that must stop `launch` before the health check.
+ */
+async function launchWindows(statusOnly: boolean, restart: boolean): Promise<boolean> {
+  const port = cdpPort()
+  if (statusOnly) {
+    const up = await cdpUp(port)
+    consola.log(up ? `Chrome CDP on :${port} is up` : `Chrome CDP on :${port} is NOT running`)
+    return up
+  }
+  if (restart) {
+    const tabs = await listPageTargets().then((t) => t.length).catch(() => null)
+    if (tabs !== null) consola.info(`Restarting Chrome on :${port} — closing ${tabs} open tab(s).`)
+    try {
+      const r = await stopOurChrome(port, (s) => consola.warn(s))
+      if (r === 'not-ours') {
+        consola.error(`Refusing to restart a Chrome this account did not start (something else serves :${port}).`)
+        return false
+      }
+    } catch (e: any) {
+      consola.error(String(e?.message ?? e))
+      return false
+    }
+  }
+  const m = migrateProfile()
+  if (m.outcome === 'moved') consola.success(`Profile ${m.detail} — logins travel with it.`)
+  else if (m.outcome === 'refused' || m.outcome === 'failed') consola.warn(`Profile not moved: ${m.detail}`)
+
+  const r = await startChrome(port, m.dir, chromeLogPath())
+  switch (r.outcome) {
+    case 'already-running':
+      consola.log(`Already running on :${port} — the port is held.`)
+      consola.log('Drive it with: browser-automation goto -s <session> <url>')
+      consola.log('(Port held is not health. Check it works: browser-automation doctor)')
+      return true
+    case 'launched':
+      consola.log(`Chrome launched on :${port} in ${r.seconds}s (profile: ${m.dir}, log: ${chromeLogPath()})`)
+      consola.log('Drive it with: browser-automation goto -s <session> <url>')
+      return true
+    case 'not-ours':
+      consola.error(
+        `Something on this computer is already serving CDP on port ${port}, and it is not a Chrome `
+        + `this account started. Driving it would act in ANOTHER user's browser — quit Chrome in that `
+        + `account, or set BROWSER_AUTOMATION_PORT to a free port for this one.`,
+      )
+      return false
+    case 'no-chrome':
+      consola.error(
+        'Chrome not found (looked in Program Files, Program Files (x86) and %LOCALAPPDATA%). '
+        + 'Install it — winget install --id Google.Chrome -e — or set BROWSER_AUTOMATION_CHROME to chrome.exe.',
+      )
+      return false
+    case 'timeout':
+      consola.error(`Chrome did not serve CDP on :${port} within 60s. Chrome's log: ${r.log}`)
+      return false
+  }
+}
