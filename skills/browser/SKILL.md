@@ -62,8 +62,10 @@ file under `~/.browser-automation/sessions/`.
   case of someone watching it. The person's everyday Chrome counts as "another
   app": it is checked by process, not by name. ⛔ Do not reach for `focus --raise`
   to "make it show" — that is the screen-taking version; keep it for the moments
-  a person must look (a sign-in, a CAPTCHA). macOS only; elsewhere `--show`
-  reports that it cannot tell and does nothing.
+  a person must look (a sign-in, a CAPTCHA). **macOS and Windows**; on Linux
+  `--show` reports that it cannot tell and does nothing. On Windows each
+  `--show` costs about 0.9 s (a PowerShell probe of the foreground window), so
+  turn it on where someone may be watching, not by reflex for batch work.
 - **Self-healing.** If the tab was closed (or Chrome restarted and reissued
   targetIds), the next `goto` just opens a fresh background tab for that session.
 - **Refs live in the DOM.** `snapshot` stamps `data-ba-ref="e7"` onto each
