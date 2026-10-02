@@ -55,46 +55,63 @@ if [ "$CHECK_ONLY" = true ]; then
   exit 0
 fi
 
-# Sync files
-for rel in "${PAYLOAD_FILES[@]}"; do
-  mkdir -p "$(dirname "$PLUGINS_DIR/plugins/browser-automation/$rel")"
-  cp -p "$REPO_ROOT/$rel" "$PLUGINS_DIR/plugins/browser-automation/$rel"
-done
-
-# Remove .mcp.json from plugins repo if it lingers from an older sync (the plugin no longer ships an MCP server).
-rm -f "$PLUGINS_DIR/plugins/browser-automation/.mcp.json"
-
+# **Start from the latest marketplace, then copy on top.** Never commit first and
+# rebase after: the payload is generated from a release, so the only thing a
+# rebase can conflict with is an OLDER sync of this same plugin made from another
+# checkout — which is exactly what happened at 0.4.16 (0.4.15 had been synced
+# elsewhere). Copying onto an up-to-date tree has nothing to conflict with.
 cd "$PLUGINS_DIR"
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+[ "$BRANCH" = "main" ] || { echo "Error: plugins repo is on '$BRANCH', not main. Not syncing into a branch." >&2; exit 1; }
+# Other plugins sync from here too. Their uncommitted or unpushed work is not
+# ours to carry, drop or rebase — stop and say so.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Error: $PLUGINS_DIR has uncommitted changes; not syncing on top of someone's work:" >&2
+  git status --short >&2; exit 1
+fi
+git fetch -q origin main
+if [ -n "$(git rev-list origin/main..HEAD)" ]; then
+  echo "Error: $PLUGINS_DIR has commits not on origin/main — push or drop them first:" >&2
+  git log --oneline origin/main..HEAD >&2; exit 1
+fi
+
+SRC_VERSION="$(node -p "require('$REPO_ROOT/.claude-plugin/plugin.json').version")"
+sync_on_top() {
+  git merge -q --ff-only origin/main
+  # Never replace a newer published plugin with an older one.
+  local have
+  have="$(node -p "try{require('./plugins/browser-automation/.claude-plugin/plugin.json').version}catch{''}" 2>/dev/null)"
+  if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$have" "$SRC_VERSION" | sort -V | tail -1)" != "$SRC_VERSION" ]; then
+    echo "Error: the marketplace already has browser-automation $have, newer than $SRC_VERSION. Not downgrading." >&2
+    exit 1
+  fi
+  for rel in "${PAYLOAD_FILES[@]}"; do
+    mkdir -p "$(dirname "plugins/browser-automation/$rel")"
+    cp -p "$REPO_ROOT/$rel" "plugins/browser-automation/$rel"
+  done
+  # Remove .mcp.json if it lingers from an older sync (no MCP server any more).
+  rm -f "plugins/browser-automation/.mcp.json"
+}
+
+sync_on_top
 if git diff --quiet -- plugins/browser-automation && [ -z "$(git ls-files --others --exclude-standard -- plugins/browser-automation)" ]; then
   echo "Plugins repo already up to date"
   exit 0
 fi
-
-# **Other plugins publish to this repo too.** The 0.4.14 sync was rejected
-# because a cctabs sync had landed on origin/main in between — the marketplace
-# is shared, so "behind origin" is the normal state, not an error. Commit ONLY
-# our directory, then replay it on top of whatever arrived and push; our
-# commit touches nothing outside plugins/browser-automation, so the rebase
-# cannot conflict with another plugin's sync. It can conflict with a sync of
-# THIS plugin from another checkout — then stop rather than guess.
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [ "$BRANCH" != "main" ]; then
-  echo "Error: plugins repo is on '$BRANCH', not main. Not syncing into a branch." >&2
-  exit 1
-fi
-VERSION="$(node -p "require('$REPO_ROOT/package.json').version" 2>/dev/null || echo '?')"
 git add plugins/browser-automation
-git commit -q -m "chore: sync browser-automation plugin to $VERSION"
+git commit -q -m "chore: sync browser-automation plugin to $SRC_VERSION"
+
+# Someone may push between our fetch and our push. Then drop OUR commit (we
+# verified above that nothing else was local), take theirs, and copy again.
 for attempt in 1 2 3; do
-  git fetch -q origin main
-  if ! git rebase -q origin/main; then
-    git rebase --abort
-    echo "Error: rebasing the sync onto origin/main conflicted — something else changed" >&2
-    echo "       plugins/browser-automation. Resolve in $PLUGINS_DIR, then push." >&2
-    exit 1
-  fi
   git push -q origin main && break
   [ "$attempt" = 3 ] && { echo "Error: push kept being rejected; see $PLUGINS_DIR." >&2; exit 1; }
+  git fetch -q origin main
+  git reset -q --hard origin/main
+  sync_on_top
+  git diff --quiet -- plugins/browser-automation && { echo "Plugins repo already up to date"; exit 0; }
+  git add plugins/browser-automation
+  git commit -q -m "chore: sync browser-automation plugin to $SRC_VERSION"
 done
 
-echo "Synced browser-automation to plugins repo"
+echo "Synced browser-automation $SRC_VERSION to plugins repo"
