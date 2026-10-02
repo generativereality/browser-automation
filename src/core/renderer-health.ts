@@ -73,7 +73,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { cdpHost, cdpPort, closeTab, createTab, listPageTargets } from './cdp.js'
 import { askRenderer, ensureRenderer, envInt, type RendererOutcome } from './renderer-wake.js'
@@ -348,7 +348,11 @@ export function gatherEvidence(): RendererEvidence {
 
 /** Where `launch` writes Chrome's stdout/stderr — Chrome logs the real reason there. */
 export function chromeLogPath(): string {
-  const tmp = process.env.TMPDIR?.replace(/\/$/, '') || '/tmp'
+  // Windows has no TMPDIR and no /tmp; its temp folder is per user, as the
+  // launch script's $TMPDIR is on macOS.
+  const tmp = process.platform === 'win32'
+    ? tmpdir()
+    : process.env.TMPDIR?.replace(/\/$/, '') || '/tmp'
   return process.env.BROWSER_AUTOMATION_LOG || `${tmp}/chrome-${targetPort()}.log`
 }
 
