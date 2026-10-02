@@ -261,7 +261,7 @@ export async function renderersAnswer(targetId: string, timeout = DEFAULT_TIMEOU
  * Chrome, where a perfectly healthy browser was accused of having lost a
  * bootstrap name that in fact belonged to a different pid.
  */
-function targetPort(): number {
+export function targetPort(): number {
   const explicit = process.env.BROWSER_AUTOMATION_CDP
   if (explicit) {
     try {

@@ -38,7 +38,8 @@
 
 import { execFileSync } from 'node:child_process'
 import { activateTab } from './cdp.js'
-import { browserPid } from './renderer-health.js'
+import { browserPid, targetPort } from './renderer-health.js'
+import { windowsForeground } from './windows-foreground.js'
 
 export type ShowOutcome = 'shown' | 'not-frontmost' | 'unsupported'
 
@@ -58,6 +59,15 @@ function ourChromeIsFrontmost(): boolean | null {
   // The fake Chrome in the test suite is not a process lsappinfo could report.
   const injected = process.env.BROWSER_AUTOMATION_TEST_FRONTMOST
   if (injected) return injected === 'chrome'
+  if (process.platform === 'win32') {
+    // GetForegroundWindow's owner vs the automation Chrome's browser process,
+    // both from one PowerShell call (core/windows-foreground.ts). A 0 on either
+    // side — no foreground window (locked, or a non-interactive session), or
+    // no Chrome on our port — is "cannot say", never "yes".
+    const w = windowsForeground(targetPort())
+    if (!w || !w.foreground || !w.browser) return null
+    return w.foreground === w.browser
+  }
   if (process.platform !== 'darwin') return null
   try {
     const asn = execFileSync('lsappinfo', ['front'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -88,7 +98,7 @@ export function describeNotShown(outcome: ShowOutcome): string | null {
       + 'It selects the tab once the automation Chrome is in front.'
   }
   if (outcome === 'unsupported') {
-    return 'Tab not shown: cannot tell which app is in front here (macOS only), so --show did nothing rather than risk taking the screen.'
+    return 'Tab not shown: cannot tell which app is in front here (supported on macOS and Windows), so --show did nothing rather than risk taking the screen.'
   }
   return null
 }
