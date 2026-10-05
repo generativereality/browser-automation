@@ -18,22 +18,16 @@
 // an administrator sees every user's command lines.
 
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, openSync, renameSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { mkdirSync, openSync, renameSync, statSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { closeBrowser } from './cdp.js'
+import { chromeExecutable } from './chrome-path.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-/** chrome.exe: an explicit override, then the per-machine and per-user installs. */
+/** chrome.exe — decided in one place for every platform (core/chrome-path.ts). */
 export function windowsChromeExe(): string | null {
-  const explicit = process.env.BROWSER_AUTOMATION_CHROME || process.env.CHROME
-  if (explicit) return existsSync(explicit) ? explicit : null
-  const candidates = [
-    process.env.PROGRAMFILES && join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    process.env['PROGRAMFILES(X86)'] && join(process.env['PROGRAMFILES(X86)']!, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-  ].filter(Boolean) as string[]
-  return candidates.find((p) => existsSync(p)) ?? null
+  return chromeExecutable().path
 }
 
 /** Is anything answering CDP on this port? (The script's `is_up`.) */
