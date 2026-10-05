@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { cdpHost, cdpPort, listTargets } from '../core/cdp.js'
 import { listSessions } from '../core/session.js'
 import { resolveProfile } from '../core/profile.js'
+import { chromeExecutable, chromeSearchDescription } from '../core/chrome-path.js'
 import { probeRenderer, explainRendererFailure, gatherEvidence, recentProbeStats, chromeLogPath } from '../core/renderer-health.js'
 
 
@@ -52,6 +53,14 @@ export const doctorCommand = define({
       consola.log(`    ⚠ still inside Chrome's own folder, which an app-hosted session may be refused.`)
       consola.log(`      Move it (logins included): browser-automation profile --migrate`)
     }
+
+    // Which binary `launch` would start. Reported before the CDP check on
+    // purpose: "no browser on the port" is exactly when you need to know
+    // whether launch can find one.
+    const chrome = chromeExecutable()
+    if (chrome.path) consola.log(`  • Chrome binary: ${chrome.path} (${chrome.source})`)
+    else bad(`Chrome binary: not found (looked in ${chromeSearchDescription()}) — \`launch\` cannot start one. Install Chrome, or set CHROME.`)
+    if (chrome.ignored) consola.log(`    ⚠ ignoring ${chrome.ignored}`)
 
     // **Whose browser is this?** The failure this exists for is invisible
     // without asking: another account's Chrome answers every request

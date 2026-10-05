@@ -333,6 +333,13 @@ code lives, how to validate with `node dist/index.js`, and the PR steps:
 
 ## Troubleshooting
 
+- **Which Chrome `launch` starts:** `CHROME` / `BROWSER_AUTOMATION_CHROME` when it
+  points at an executable; otherwise macOS `/Applications` then **`~/Applications`**
+  (where an account that cannot write `/Applications` gets Chrome installed),
+  Windows Program Files then the per-user `%LOCALAPPDATA%` install, Linux
+  `google-chrome`/`chromium` on PATH. `doctor` prints the one it found — check that
+  line before concluding "Chrome is not installed". Before 0.4.19 the macOS launcher
+  only knew `/Applications` and ignored `CHROME`.
 - **`No CDP browser on http://localhost:<port>`** → `browser-automation launch`.
   If it says the port is held by ANOTHER user, that is not your Chrome and
   driving it would act in their session — quit Chrome in that account, or set

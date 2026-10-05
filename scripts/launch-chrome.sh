@@ -56,6 +56,7 @@ ask_cli_for_port() {
 
 PORT=""
 PROFILE=""
+CHROME_ARG=""
 RESTART=0
 STOP_ONLY=0
 ARGS=()
@@ -63,6 +64,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --port) PORT="${2:-}"; shift 2 ;;
     --profile) PROFILE="${2:-}"; shift 2 ;;
+    --chrome) CHROME_ARG="${2:-}"; shift 2 ;;
     --restart) RESTART=1; shift ;;
     # Quit our Chrome and stop there. `launch --restart` uses it so the profile
     # can be moved while nothing has it open, before the relaunch.
@@ -227,22 +229,41 @@ if is_up; then
   exit 0
 fi
 
-# Resolve Chrome binary across macOS / Linux.
-case "$(uname -s)" in
-  Darwin)
-    CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    ;;
-  Linux)
-    CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
-    ;;
-  *)
-    echo "Error: unsupported OS $(uname -s). Launch Chrome manually with --remote-debugging-port=${PORT} --user-data-dir=\"${PROFILE}\"." >&2
-    exit 1
-    ;;
-esac
+# Resolve the Chrome binary. **Asked for, like the port and the profile**:
+# `chromeExecutable()` in src/core/chrome-path.ts decides, and `launch` passes it
+# with --chrome. The order below only repeats it for a person running this by
+# hand: an explicit $BROWSER_AUTOMATION_CHROME / $CHROME that is executable, then
+# /Applications, then ~/Applications.
+#
+# This used to hardcode /Applications/Google Chrome.app and OVERWRITE $CHROME, so
+# a Chrome in ~/Applications — where Mind My Money installs it for an account
+# that cannot write /Applications — could not be launched at all (2026-10-05).
+CHROME_FROM_ENV="${CHROME:-}"   # read BEFORE reusing the name below
+CHROME=""
+for c in "$CHROME_ARG" "${BROWSER_AUTOMATION_CHROME:-}" "$CHROME_FROM_ENV"; do
+  if [ -n "$c" ] && [ -x "$c" ] && [ ! -d "$c" ]; then CHROME="$c"; break; fi
+done
+if [ -z "$CHROME" ]; then
+  case "$(uname -s)" in
+    Darwin)
+      for c in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+               "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+        if [ -x "$c" ]; then CHROME="$c"; break; fi
+      done
+      ;;
+    Linux)
+      CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+      ;;
+    *)
+      echo "Error: this script is for macOS and Linux (got $(uname -s)). On Windows, run \`browser-automation launch\` — it does not use this script." >&2
+      exit 1
+      ;;
+  esac
+fi
 
-if [ ! -x "$CHROME" ]; then
-  echo "Error: Chrome not found. Install it (or set CHROME=... if it lives elsewhere)." >&2
+if [ -z "$CHROME" ] || [ ! -x "$CHROME" ]; then
+  echo "Error: Chrome not found (looked in /Applications and ~/Applications on macOS, PATH on Linux)." >&2
+  echo "       Install it, or set CHROME=/path/to/chrome if it lives elsewhere." >&2
   exit 1
 fi
 

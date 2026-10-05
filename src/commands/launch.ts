@@ -6,6 +6,7 @@ import { launchScriptPath } from '../core/paths.js'
 import { cdpPort, closeBrowser, listPageTargets } from '../core/cdp.js'
 import { probeRenderer, explainRendererFailure, chromeLogPath } from '../core/renderer-health.js'
 import { migrateProfile, resolveProfile } from '../core/profile.js'
+import { chromeExecutable } from '../core/chrome-path.js'
 import { cdpUp, startChrome, stopOurChrome } from '../core/launch-windows.js'
 
 export const launchCommand = define({
@@ -67,7 +68,13 @@ export const launchCommand = define({
     else if (m.outcome === 'refused' || m.outcome === 'failed') consola.warn(`Profile not moved: ${m.detail}`)
     else if (m.outcome === 'in-use') consola.info(`Profile not moved yet: ${m.detail}`)
 
-    const r = bash(['--profile', m.dir])
+    // The binary is decided here too (core/chrome-path.ts) and passed down, so
+    // the script never has its own idea of where Chrome lives. When none is
+    // found the script still runs: an already-running Chrome needs no binary,
+    // and if one is needed the script says where it looked.
+    const chrome = chromeExecutable()
+    if (chrome.ignored) consola.warn(`Ignoring ${chrome.ignored}.`)
+    const r = bash(['--profile', m.dir, ...(chrome.path ? ['--chrome', chrome.path] : [])])
 
     if (r.status !== 0) process.exit(r.status ?? 1)
     }
