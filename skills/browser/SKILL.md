@@ -295,6 +295,38 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   Chrome by hand on Windows any more; that was the workaround for CLIs older than
   0.4.18, which refused with `unsupported OS MINGW64_NT`. A cold start brings
   Chrome to the front once, on every platform.
+  → **Read [`references/windows.md`](references/windows.md)** before driving from
+  Git Bash or PowerShell: the CLI is often not on `PATH` there, `list` cannot tell
+  you whether a browser is up, and `|` in an `eval` breaks through the `.cmd` shim.
+- ⛔ **Every `eval` on a session shares ONE JavaScript context**, so a `const` from
+  an earlier call is still declared, and reusing the name fails with
+  `SyntaxError: Identifier 'b' has already been declared`, which reads as a
+  quoting problem in the expression you just wrote. ⇒ Wrap every `eval` body in
+  an IIFE: `(() => { const t = …; return …; })()`.
+- ⛔ **`read` is not a byte-exact transport.** It returns *rendered* text, so
+  soft-wrap points leak into long unbroken strings: the same JSON endpoint read
+  twice gave `696febae99cb770065879511` and `696 febae99cb770065879511`. Nothing
+  errors and it still parses. ⇒ When the bytes matter (JSON you will commit or
+  diff, anything hashed), use `download --url [endpoint]`, which was byte-identical
+  across repeated reads.
+- ⛔ **A background tab's cross-origin iframes screenshot as blank space** (payment
+  forms, embedded PDF viewers, widgets) while everything around them renders, so
+  it reads as a broken page. The renderer is simply not painting them: run `focus`
+  on the tab first, and capture the **viewport**, not `--full` (with
+  `captureBeyondViewport` they composite at their pre-capture width, narrow and
+  clipped). A blank region on a page with no cross-origin iframes is a real finding.
+- **Controls that ignore `click`** (Radix menus, `click` vs `--trusted`), hidden
+  dialogs, stalled infinite scroll, React composers and GitHub image attachments:
+  **[`references/page-recipes.md`](references/page-recipes.md)**.
+- **This needs the operator's machine, awake.** The shared headed Chrome and its
+  logins live there, so a cloud run (a scheduled remote agent) cannot use it, and a
+  closed lid sleeps the machine (`caffeinate` prevents idle sleep, not lid-close
+  sleep). Split the work: browser- and login-bound steps locally; research and
+  repo work wherever.
+- **`screencapture` / `osascript` are not a fallback without macOS grants.**
+  Ungranted, they fail with `could not create image from display` and AppleEvent
+  `-1712`: Screen Recording and Automation permissions, not missing capability.
+  Probe with one line before relying on them.
 
 ## Network insights — find the API behind a page
 
@@ -358,6 +390,13 @@ code lives, how to validate with `node dist/index.js`, and the PR steps:
   and exact: *open Terminal and run `browser-automation profile --migrate`; if macOS
   asks whether Terminal may access data from other apps, allow it.*
 - **`command not found: browser-automation`** → `npm install -g @generativereality/browser-automation`.
+- **The Chrome on the port is on a profile you did not expect** → someone worked
+  around a launch failure by hand (`BROWSER_AUTOMATION_PROFILE`, a typed
+  `--user-data-dir`), and that instance has few or no logins. Read the live
+  browser's profile before trusting a drive:
+  `ps -p $(lsof -ti:9223) -o command= | tr ' ' '\n' | grep user-data-dir`. The
+  shared profile is `~/.browser-automation/chrome-profile`. ⚠️ Do not just kill it;
+  it may be the operator's live browser. Ask, then `launch`.
 - **Chrome was restarted** → nothing to do; the next `goto` recreates the
   session's tab automatically (sessions self-heal; `list` shows `stale`).
 - **A login wall on a repeat run** → the profile lost cookies (rare) or the site
