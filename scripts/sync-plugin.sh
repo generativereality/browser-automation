@@ -13,7 +13,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # finish` points it at the released tag, so what ships is what was tagged —
 # while still running THIS copy of the script (an old tag's copy lacks fixes).
 REPO_ROOT="${BA_PLUGIN_SOURCE:-$(dirname "$SCRIPT_DIR")}"
-PLUGINS_DIR="${BA_PLUGINS_DIR:-$(dirname "$SCRIPT_DIR")/../plugins}"   # override for tests
+# Beside the MAIN checkout, not beside this script: a release run from a linked
+# worktree (scratch dirs, .claude/worktrees/…) has no ../plugins next to it —
+# 0.5.0's finish died there. --git-common-dir is the main checkout's .git.
+MAIN_CHECKOUT="$(dirname "$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-common-dir)")"
+PLUGINS_DIR="${BA_PLUGINS_DIR:-$MAIN_CHECKOUT/../plugins}"   # override for tests
 CHECK_ONLY=false
 [ "${1:-}" = "--check" ] && CHECK_ONLY=true
 
