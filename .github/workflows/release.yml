@@ -39,7 +39,46 @@ permissions:
   id-token: write # required for OIDC; without it npm sees no provenance
 
 jobs:
+  # Runs BEFORE the approval gate, so a tag that must not publish fails here
+  # instead of queueing a run for the maintainer to approve.
+  #
+  # Why: on 2026-09-23 v0.4.15 was published from a commit that never reached
+  # master, and that evening the tag was re-created on master's release commit.
+  # The second run sat at the gate for two weeks, and approving it could only
+  # have failed (npm versions are permanent). Since then npm's 0.4.15 `gitHead`
+  # and the git tag name different commits. Each check below would have
+  # stopped one half of that.
+  #
+  # Tags only: a workflow_dispatch from a branch skips this job and therefore
+  # `publish` too. Dispatching on a tag ref still releases.
+  preflight:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The tag, package.json and plugin.json agree
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          PLUG=$(node -p "require('./.claude-plugin/plugin.json').version")
+          echo "tag=$TAG package.json=$PKG plugin.json=$PLUG"
+          [ "$TAG" = "$PKG" ] || { echo "::error::tag $TAG != package.json $PKG"; exit 1; }
+          [ "$PLUG" = "$PKG" ] || { echo "::error::plugin.json $PLUG != package.json $PKG"; exit 1; }
+      - name: The tagged commit is on master
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master \
+            || { echo "::error::$GITHUB_SHA is not on master — release from master (scripts/release.sh cut)"; exit 1; }
+      - name: This version is not on npm yet
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@generativereality%2Fbrowser-automation/$V")
+          echo "registry answered $CODE for $V"
+          [ "$CODE" = 404 ] || { echo "::error::$V is already published (or the registry answered $CODE). A tag is never re-pushed; cut a new version."; exit 1; }
+
   publish:
+    needs: preflight
     runs-on: ubuntu-latest
     # **The release gate.** Pushing a tag no longer publishes; it queues the job and waits for a
     # human to approve it in the Actions UI, because the `release` environment requires a

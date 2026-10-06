@@ -31,6 +31,9 @@ PKG=@generativereality/browser-automation
 die() { echo "Error: $*" >&2; exit 1; }
 say() { printf '\n== %s\n' "$*"; }
 
+# HTTP status of one version on the registry: 200 published, 404 not.
+registry_code() { curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${PKG/\//%2F}/$1"; }
+
 last_tag() { git -C "$ROOT" describe --tags --abbrev=0 "$BASE" 2>/dev/null || true; }
 
 plan() {
@@ -78,7 +81,13 @@ cut() {
     [0-9]*.[0-9]*.[0-9]*) next="$want" ;;
     *) die "unknown version '$want'" ;;
   esac
+  # A tag is never moved or re-pushed, and a version is never re-used: on
+  # 2026-09-23 v0.4.15 was re-created on another commit after it had published,
+  # so npm's 0.4.15 and the git tag still name different commits. Ask the remote
+  # and the registry, not just this clone's tags.
   git rev-parse -q --verify "refs/tags/v$next" >/dev/null && die "v$next already exists"
+  [ -z "$(git ls-remote origin "refs/tags/v$next")" ] || die "v$next already exists on origin"
+  [ "$(registry_code "$next")" = 404 ] || die "$next is already on npm (or the registry did not answer 404) — pick another version"
   [ -z "$(git log --format=%h "$(last_tag)..HEAD")" ] && die "nothing unreleased since $(last_tag)"
 
   say "Releasing $cur -> $next"
@@ -134,8 +143,19 @@ TXT
 finish() {
   git fetch -q origin --tags
   local tag; tag="$(last_tag)"; local v="${tag#v}"
-  local run; run="$(gh run list --repo "$REPO" --workflow release.yml --branch "$tag" --limit 1 --json databaseId --jq '.[0].databaseId')"
-  [ -n "$run" ] || die "no release run for $tag"
+  # GitHub's run LISTING lags the run: at 0.4.18 `gh run list --branch <tag>`
+  # answered nothing for minutes while `gh run view <id>` said success — so
+  # finish died "no release run" twice on a release that had shipped. Retry.
+  # The run for the tag's CURRENT commit: a tag that was ever re-pushed has a
+  # run per push (v0.4.15 had two), and the newest is not necessarily it.
+  local sha; sha="$(git rev-parse "$tag^{commit}")"
+  local run=""
+  for _ in $(seq 1 18); do
+    run="$(gh run list --repo "$REPO" --workflow release.yml --branch "$tag" --limit 10 --json databaseId,headSha --jq "[.[] | select(.headSha == \"$sha\")][0].databaseId // empty")"
+    [ -n "$run" ] && break
+    sleep 10
+  done
+  [ -n "$run" ] || die "no release run for $tag after 3 minutes"
 
   say "Waiting for the release run of $tag"
   local s
@@ -153,13 +173,17 @@ finish() {
   # The registry, not `npm view`: publishing reports success minutes before
   # the version is served (3.5 min for 0.4.13), and `npm view` also caches.
   say "Waiting for $v on the registry"
-  local name="${PKG/\//%2F}"
   for _ in $(seq 1 60); do
-    [ "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$name/$v")" = 200 ] && break
+    [ "$(registry_code "$v")" = 200 ] && break
     sleep 10
   done
-  [ "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$name/$v")" = 200 ] || die "$v not on the registry after 10 minutes"
-  echo "  $PKG@$v is live"
+  [ "$(registry_code "$v")" = 200 ] || die "$v not on the registry after 10 minutes"
+  # And it is the tag's commit: npm records the commit it packed as gitHead.
+  # This is how 0.4.15's mismatch was found, two weeks late.
+  local head
+  head="$(curl -s "https://registry.npmjs.org/${PKG/\//%2F}/$v" | node -pe 'JSON.parse(require("fs").readFileSync(0)).gitHead')"
+  [ "$head" = "$sha" ] || die "npm's $v was packed from $head, but $tag is $sha — stop and tell the maintainer"
+  echo "  $PKG@$v is live, packed from $tag ($(git rev-parse --short "$sha"))"
 
   say "Plugin marketplace"
   # Sync from the released tag, not from whatever this checkout has.
@@ -170,7 +194,16 @@ finish() {
   BA_PLUGIN_SOURCE="$RELEASE_WT" bash "$ROOT/scripts/sync-plugin.sh"
 
   say "This machine"
-  npm install -g "$PKG@$v" >/dev/null 2>&1 && echo "  installed $(browser-automation --version)"
+  # --prefer-online: npm caches the package's metadata, so right after a
+  # publish `npm install -g pkg@<new>` answers ETARGET "No matching version"
+  # for a version the registry is already serving (0.4.17: the version
+  # endpoint said 200, install said notarget). And say when it fails — this
+  # line used to swallow that and print nothing.
+  if npm install -g --prefer-online "$PKG@$v" >/dev/null 2>&1; then
+    echo "  installed $(browser-automation --version)"
+  else
+    echo "  ⚠ could not install $PKG@$v globally — run: npm install -g --prefer-online $PKG@$v" >&2
+  fi
 
   say "Downstream — not done by this script"
   cat <<TXT

@@ -64,12 +64,36 @@ did not say. What it now handles, so you do not have to:
   out in another worktree; neither is safe to release from. The push to `master`
   is fast-forward only — if `master` moved, it stops.
 - **The plugin marketplace (`../plugins`) is shared with other plugins**, so it is
-  routinely behind `origin/main`. `sync-plugin.sh` commits only
-  `plugins/browser-automation`, rebases onto `origin/main` and pushes. (0.4.14's
-  sync was rejected because a `cctabs` sync had landed first.) `finish` syncs the
-  **tag's** files using **this checkout's** script — an old tag's copy lacks fixes.
+  routinely behind `origin/main`. `sync-plugin.sh` fast-forwards to `origin/main`
+  FIRST, copies the release's files on top, commits only
+  `plugins/browser-automation` and pushes (retrying from the new head if it loses
+  a race). It refuses to downgrade a newer published plugin, and refuses a
+  checkout with someone's uncommitted or unpushed work. Commit-then-rebase was
+  the wrong order: 0.4.16's sync conflicted with a 0.4.15 sync of THIS plugin
+  made from another checkout. `finish` syncs the **tag's** files
+  (`BA_PLUGIN_SOURCE`) using **this checkout's** script, because an old tag's
+  copy lacks fixes.
 - **"Published" is read from the registry**, never `npm view`: a successful
   publish is not served for minutes (3.5 for 0.4.13), and `npm view` also caches.
+  The same metadata cache makes `npm install -g pkg@<new>` fail ETARGET right
+  after a publish (0.4.17), so `finish` installs with `--prefer-online`.
+- **GitHub's run LISTING lags the run.** `gh run list --branch <tag>` returned
+  nothing for minutes after 0.4.18's run had succeeded; `finish` retries for 3
+  minutes. And a run you have just approved shows `queued` again while it waits
+  for a runner — that is not "approval did not take". The proof is the approve
+  call's response length (1 = one deployment approved).
+
+- **A version is published once, from `master`, and its tag never moves.** A
+  release that went wrong is fixed by the NEXT version, never by re-creating
+  the tag. v0.4.15 was published on 2026-09-23 from a commit that never reached
+  `master`; that evening the tag was re-created on `master`'s release commit,
+  which queued a second run that sat at the gate for two weeks (cancelled
+  2026-10-06; approving it could only have failed). npm's 0.4.15 `gitHead` and
+  the git tag still name different commits. Three checks now stop that:
+  `cut` asks the remote and the registry before using a version; the
+  workflow's ungated `preflight` job fails a tag that is off `master`, already
+  on npm, or disagrees with either manifest, so it never reaches the gate;
+  and `finish` checks npm's `gitHead` is the tag's commit.
 
 **The approval gate.** Pushing the tag queues the release run behind the
 `release` environment, which requires a reviewer. `gh api
@@ -96,13 +120,15 @@ breaks releases.
 
 ## Dev gotchas
 
-- **`npm test` locally is meaningless while this user’s Chrome is up, and it is not a regression.**
-  Measured 2026-09-17: **61 failing / 12 passing** on `master`, and byte-identically on a PR branch,
-  while the same suite is **39/39 green in CI**. The renderer-health tests create and probe real
-  targets, so against a busy shared browser on `:9223` they time out — and they open tabs in the
-  browser you are working in. `BROWSER_AUTOMATION_PORT` does not isolate them; the failures persist.
-  ⇒ **Compare a branch against `master` under the same conditions before believing a red suite**, and
-  treat the CI run on the release tag as the authoritative signal. A local red here says nothing.
+- **A local `npm test` with this user's Chrome up has been BOTH red and green — so read it, then
+  compare.** Measured 2026-09-17: **61 failing / 12 passing** on `master`, byte-identical on a PR
+  branch, while CI was 39/39 green: the renderer-health tests create and probe real targets, and a busy
+  shared browser on `:9223` timed them out (`BROWSER_AUTOMATION_PORT` does not isolate them).
+  ⚠️ This line used to end "a local red here says nothing", and that stopped being true:
+  2026-09-29 → 10-05, `npm run check` ran **green locally a dozen times (39 → 58 passing, 0 failing)**
+  with the Chrome up. A rule that dismisses every red would have hidden a real one.
+  ⇒ **A local red is a signal until a same-conditions run on `master` is red the same way**; the CI
+  run on the release tag stays the authoritative one.
 
 - The agent shell runs with `set -e -o pipefail` — `grep`/`head` returning
   non-zero (no match, SIGPIPE) aborts a chained script. Keep verification
