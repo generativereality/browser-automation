@@ -1,7 +1,7 @@
 ---
 name: browser
 description: Drive a real browser from the shell via the `browser-automation` CLI — open pages, click, type, fill forms, read text, capture snapshots, all against one shared headed Chrome with a persistent profile (cookies + extensions survive). Daemonless and per-tab isolated, so many parallel Claude Code sessions can each drive their own tab without interfering. Use whenever you need to interact with a web page (especially behind a login) and there's no CLI or API that already covers the task.
-allowed-tools: Bash(browser-automation list:*) Bash(browser-automation snapshot:*) Bash(browser-automation read:*) Bash(browser-automation screenshot:*) Bash(browser-automation doctor:*) Bash(browser-automation port:*) Bash(browser-automation profile:*)
+allowed-tools: Bash(browser-automation list:*) Bash(browser-automation snapshot:*) Bash(browser-automation read:*) Bash(browser-automation screenshot:*) Bash(browser-automation doctor:*) Bash(browser-automation port:*)
 ---
 
 # Browser automation via `browser-automation`
