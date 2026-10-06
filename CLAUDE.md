@@ -83,6 +83,18 @@ did not say. What it now handles, so you do not have to:
   for a runner — that is not "approval did not take". The proof is the approve
   call's response length (1 = one deployment approved).
 
+- **A version is published once, from `master`, and its tag never moves.** A
+  release that went wrong is fixed by the NEXT version, never by re-creating
+  the tag. v0.4.15 was published on 2026-09-23 from a commit that never reached
+  `master`; that evening the tag was re-created on `master`'s release commit,
+  which queued a second run that sat at the gate for two weeks (cancelled
+  2026-10-06; approving it could only have failed). npm's 0.4.15 `gitHead` and
+  the git tag still name different commits. Three checks now stop that:
+  `cut` asks the remote and the registry before using a version; the
+  workflow's ungated `preflight` job fails a tag that is off `master`, already
+  on npm, or disagrees with either manifest, so it never reaches the gate;
+  and `finish` checks npm's `gitHead` is the tag's commit.
+
 **The approval gate.** Pushing the tag queues the release run behind the
 `release` environment, which requires a reviewer. `gh api
 …/actions/runs/<id>/pending_deployments -f state=approved` CAN approve it from
