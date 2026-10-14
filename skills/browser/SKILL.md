@@ -40,12 +40,23 @@ file under `~/.browser-automation/sessions/`.
   background, and nothing fronts a tab as a side effect of ordinary driving:
   `goto`, `read`, `snapshot`, `fill`, `eval`, `screenshot` all leave your
   frontmost app alone. Three things deliberately do more, and only these:
-  `focus` (emulates focus/visibility in the renderer — still **no window
-  moves**), `click --trusted` and `drop` (force-front the tab, because CDP input
-  grants no user activation to a renderer that considers itself hidden), and
-  `focus --raise`, which calls `Target.activateTarget` and **genuinely takes the
-  operator's screen**. `--raise` is the only one that does; reach for plain
-  `focus` unless a person needs to see the tab.
+  `focus`, `click --trusted` and `drop` make the RENDERER believe the tab is
+  focused and visible (focus emulation; CDP input grants no user activation to
+  a renderer that considers itself hidden) — **no window moves, and the tab the
+  person's window shows stays the one it showed**. `focus --raise` calls
+  `Target.activateTarget` and **genuinely takes the operator's screen**; it is
+  the only one that does. Reach for plain `focus` unless a person needs to see
+  the tab.
+- ⛔ **Selecting a tab moves where the person's typing goes.** Whatever tab a
+  Chrome window shows is where their keystrokes land the next time they bring
+  Chrome forward. Before CLI 0.5.1 a plain `focus` (and `click --trusted`,
+  `drop`) also selected the session's tab in its window; an agent's quiet
+  `focus` left an Outlook calendar selected, and the person's typing created
+  events named "A", "d", "w", "a", "cti" in their real calendar (issue #28,
+  2026-10-14). So: `--show` and `focus --raise` are the only commands that
+  select a tab on purpose — use them when a person is meant to look, and on an
+  older CLI avoid `focus` on a tab where stray keys do damage (calendars, chat,
+  editors).
 - **Show the work: `--show` / `BAC_SHOW_TAB=1`.** A person watching the Chrome
   window sees whichever tab is SELECTED, and the tabs you work in are background
   tabs — so by default they watch one stale page while titles change elsewhere
@@ -216,9 +227,9 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   those refs for one action → re-snapshot. "ref not found" means re-snapshot.
 - **`isTrusted` / synthetic events.** Clicks and fills are JS-dispatched by
   default, so widgets that demand trusted events ignore them. **For clicks, pass
-  `--trusted`** — it dispatches a real CDP `Input.dispatchMouseEvent`, brings the
-  tab to front, waits for it to be focused+visible (CDP input no-ops on a
-  backgrounded tab) and waits for the element to be actionable (stable position +
+  `--trusted`** — it dispatches a real CDP `Input.dispatchMouseEvent`, makes the
+  renderer treat the tab as focused+visible (CDP input no-ops on a backgrounded
+  tab; the person's window keeps showing its own tab) and waits for the element to be actionable (stable position +
   unoccluded hit-test) before pressing. For fills, pass `--native` to drive
   character insertion through CDP `Input.insertText`, which fires real
   `beforeinput`/`input` events.
@@ -260,8 +271,8 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
   underlying export URL/endpoint and use `--url`, or the site's API.
 - **File upload — three paths:** `setfiles [ref] [path…]` for a static `<input type=file>`;
   `upload --click [ref] [path…]` for a button that opens a native file chooser; `drop [ref]
-  [path…]` for a drag-and-drop zone with no file input (`--js` for a synthetic drop that does
-  not front the tab). ⛔ **Upload once, verify by `snapshot`/`screenshot`, and don't blindly
+  [path…]` for a drag-and-drop zone with no file input (`--js` for a synthetic drop that needs
+  no focus emulation). ⛔ **Upload once, verify by `snapshot`/`screenshot`, and don't blindly
   retry** — each successful run adds another attachment, and apps reset `files` to 0 after
   consuming it. How each path works and when to pick it:
   [`references/input-and-forms.md`](references/input-and-forms.md).

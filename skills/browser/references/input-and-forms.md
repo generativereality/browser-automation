@@ -118,11 +118,12 @@ under Gotchas; this is the detail and the worked cases behind them.
   all — a `drop` listener reading `e.dataTransfer.files` (vocalremover-style audio
   tools, many image/video drop zones). Neither `setfiles` nor `upload` applies;
   use `drop <ref> <path…>`. By default it fires a genuinely-**trusted** CDP drag
-  (`Input.dispatchDragEvent`) carrying the real files from disk: it force-fronts
-  the tab (bringToFront + focus emulation + active lifecycle — so the tab reports
-  focused+visible even when the Chrome window isn't the frontmost OS window),
+  (`Input.dispatchDragEvent`) carrying the real files from disk: it forces the
+  tab foreground for the renderer (focus emulation + active lifecycle — so the
+  tab reports focused+visible even when the Chrome window isn't the frontmost OS
+  window, without selecting it in that window; see issue #28),
   waits for the zone to be actionable, then dragEnter→dragOver→drop. The
-  force-front matters: drop-zone uploaders commonly do their work only inside a
+  forced foreground matters: drop-zone uploaders commonly do their work only inside a
   **user activation**, and CDP input grants no activation on a tab the renderer
   considers `hidden` — which it is whenever the window is occluded (the usual
   case while you work in the terminal). vocalremover.org is the canonical example:

@@ -184,8 +184,7 @@ export async function withPage<T>(targetId: string, fn: (s: CdpSession) => Promi
  *  CDP `Input.*` events (and the user-activation they grant) are dropped by the
  *  renderer when the tab's `visibilityState` is `hidden` — which it is whenever
  *  the automation Chrome window isn't the frontmost OS window (the normal case:
- *  the user is in their terminal). `Page.bringToFront` alone does NOT fix this;
- *  the tab still reports `hidden`. `Emulation.setFocusEmulationEnabled` forces
+ *  the user is in their terminal). `Emulation.setFocusEmulationEnabled` forces
  *  the renderer to treat itself as focused+visible regardless of the real window
  *  state (this is how Playwright drives backgrounded/headless pages), and
  *  `Page.setWebLifecycleState: active` un-throttles a frozen tab. Together they
@@ -193,9 +192,20 @@ export async function withPage<T>(targetId: string, fn: (s: CdpSession) => Promi
  *  drag actually lands and grants user activation — which activation-gated flows
  *  (e.g. drop-zone uploaders that only start work inside a user gesture) require.
  *
- *  All three are best-effort: older Chrome builds may not expose every command. */
+ *  Both are best-effort: older Chrome builds may not expose every command.
+ *
+ *  ⛔ **No `Page.bringToFront` here, and do not add it back.** It used to be the
+ *  first call, and it makes this tab the SELECTED tab of its Chrome window: the
+ *  tab the person had showing goes `hidden`, and the next time they bring Chrome
+ *  forward and type, the keys land in the automated tab. That happened for real
+ *  (issue #28, 2026-10-14): an agent's quiet `focus` left its Outlook calendar
+ *  selected, and the person's typing created events named "A", "d", "w", "a",
+ *  "cti" in their real calendar. It bought nothing: measured the same day on
+ *  Chrome 155 / macOS 27, a background tab with ONLY the two commands below
+ *  reports `visible` + `hasFocus()`, takes a CDP mouse click as
+ *  `isTrusted: true` and a CDP key, and the person's tab stays the visible one
+ *  throughout and after the probe tab is closed. */
 export async function forceForeground(s: CdpSession): Promise<void> {
-  await s.send('Page.bringToFront').catch(() => {})
   await s.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
   await s.send('Page.setWebLifecycleState', { state: 'active' }).catch(() => {})
 }

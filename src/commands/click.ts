@@ -17,7 +17,7 @@ export const clickCommand = define({
     trusted: {
       type: 'boolean',
       description:
-        'Dispatch a real, genuinely-trusted CDP mouse click (Input.dispatchMouseEvent) at the element instead of the default JS-dispatched el.click(). Brings the tab to front and WAITS for it to be focused+visible (CDP input no-ops on a backgrounded tab), then waits for the element to be actionable (stable position + unoccluded hit-test) before pressing — mirroring Playwright. Use for widgets that demand isTrusted events AND animate in: artdeco dropdown menu items (LinkedIn More→Connect), Radix dropdown/popover triggers, cmdk comboboxes — which a default click, or an immediate trusted click on stale coordinates, only highlights without firing.',
+        'Dispatch a real, genuinely-trusted CDP mouse click (Input.dispatchMouseEvent) at the element instead of the default JS-dispatched el.click(). Makes the renderer treat the tab as focused+visible and WAITS until it reports so (CDP input no-ops on a backgrounded tab) — without selecting the tab in its window, so the person\'s own tab keeps their typing, then waits for the element to be actionable (stable position + unoccluded hit-test) before pressing — mirroring Playwright. Use for widgets that demand isTrusted events AND animate in: artdeco dropdown menu items (LinkedIn More→Connect), Radix dropdown/popover triggers, cmdk comboboxes — which a default click, or an immediate trusted click on stale coordinates, only highlights without firing.',
     },
   },
   async run(ctx) {
@@ -34,8 +34,10 @@ export const clickCommand = define({
       // artdeco dropdown menu items being the canonical hard case). Two things
       // the old immediate dispatch got wrong, both reproduced + fixed here:
       //   1. Focus race — CDP input no-ops on a backgrounded tab, so after
-      //      `Page.bringToFront` we WAIT until the tab actually reports focused +
-      //      visible before pressing (the "sometimes no-op'd" flakiness).
+      //      forcing focus emulation we WAIT until the tab actually reports
+      //      focused + visible before pressing (the "sometimes no-op'd"
+      //      flakiness). It never selects the tab in its window: see
+      //      forceForeground, and issue #28.
       //   2. Actionability — coordinates resolved once, immediately, land on
       //      STALE positions while a menu/popover is still animating in (the item
       //      only highlights, never fires). We poll until the click-point is both
