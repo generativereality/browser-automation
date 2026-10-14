@@ -39,7 +39,7 @@ function guessMime(p: string): string {
 export const dropCommand = define({
   name: 'drop',
   description:
-    'Drop local file(s) onto a drop-zone element by ref — for uploaders wired to drag-and-drop (a `drop` listener reading `e.dataTransfer.files`) rather than an <input type=file>. Default fires a genuinely-trusted CDP drag sequence (Input.dispatchDragEvent) carrying the real files from disk: brings the tab to front, waits for it to be focused+visible, waits for the target to be actionable (stable + unoccluded), then dragEnter→dragOver→drop — mirroring `click --trusted`. Use --js for a synthetic (isTrusted=false) DataTransfer drop that does NOT steal focus, for zones that accept synthetic events. For a static <input type=file> use `setfiles`; for a button that opens a file chooser use `upload`.',
+    'Drop local file(s) onto a drop-zone element by ref — for uploaders wired to drag-and-drop (a `drop` listener reading `e.dataTransfer.files`) rather than an <input type=file>. Default fires a genuinely-trusted CDP drag sequence (Input.dispatchDragEvent) carrying the real files from disk: makes the renderer treat the tab as focused+visible (without selecting it in its window), waits for that, waits for the target to be actionable (stable + unoccluded), then dragEnter→dragOver→drop — mirroring `click --trusted`. Use --js for a synthetic (isTrusted=false) DataTransfer drop that does NOT steal focus, for zones that accept synthetic events. For a static <input type=file> use `setfiles`; for a button that opens a file chooser use `upload`.',
   args: {
     ...targetArgs,
     on: { type: 'positional', description: 'Ref of the drop-zone element (run snapshot first), e.g. e7' },
@@ -47,7 +47,7 @@ export const dropCommand = define({
     js: {
       type: 'boolean',
       description:
-        'Dispatch a synthetic (isTrusted=false) DataTransfer drop instead of the trusted CDP path. Does not bring the tab to front (no focus steal). Injects each file\'s bytes into the page to build the File objects. Use for drop zones that accept synthetic events; falls short on zones that gate on isTrusted.',
+        'Dispatch a synthetic (isTrusted=false) DataTransfer drop instead of the trusted CDP path. Needs no focus emulation. Injects each file\'s bytes into the page to build the File objects. Use for drop zones that accept synthetic events; falls short on zones that gate on isTrusted.',
     },
   },
   async run(ctx) {

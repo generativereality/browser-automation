@@ -29,8 +29,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * # The two ways, and why the quiet one is the default
  *
  * `Emulation.setFocusEmulationEnabled` makes the renderer treat itself as
- * focused and visible whatever the real window is doing — no window moves, and
- * the operator's frontmost app is undisturbed. That is what this does by
+ * focused and visible whatever the real window is doing — no window moves, the
+ * operator's frontmost app is undisturbed, and the tab their window SHOWS stays
+ * the one it showed (it did not until issue #28: see forceForeground). That is what this does by
  * default, and it is how Playwright drives backgrounded pages.
  *
  * `--raise` additionally calls `Target.activateTarget`, which genuinely brings
@@ -41,7 +42,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  *
  * # It reports the outcome, not the acceptance
  *
- * All three CDP commands are best-effort — an older Chrome may not expose one —
+ * Both CDP commands are best-effort — an older Chrome may not expose one —
  * so "sent" says nothing. This reads `document.hasFocus()` and
  * `visibilityState` back afterwards and prints what it actually achieved,
  * naming what it could not confirm rather than printing a tick over it.
@@ -49,7 +50,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export const focusCommand = define({
   name: 'focus',
   description:
-    'Make a tab report itself focused + visible, so pages that defer work while hidden (rendering, polling, charts, video) behave as if watched. Quiet by default — no window moves and the operator keeps their frontmost app. Add --raise to genuinely bring the tab to the front, which DOES take the screen.',
+    'Make a tab report itself focused + visible, so pages that defer work while hidden (rendering, polling, charts, video) behave as if watched. Quiet by default — no window moves, the operator keeps their frontmost app, and their window keeps showing its own tab. Add --raise to genuinely bring the tab to the front, which DOES take the screen.',
   args: {
     ...targetArgs,
     raise: {

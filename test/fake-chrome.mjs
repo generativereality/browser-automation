@@ -69,6 +69,16 @@ function onTextFrames(sock, head, cb) {
  *   focusEmulationWorks=false -> Emulation.setFocusEmulationEnabled is answered
  *                             but the renderer goes on reporting itself hidden,
  *                             as an older Chrome without the command would.
+ *   userTabs=['mail','calendar'] -> the person's own tabs, open before the CLI
+ *                             touches anything, in ONE window showing the first.
+ *                             `selectedTab()` then answers which tab that window
+ *                             shows — what the person's typing goes into.
+ *
+ * The selected-tab model is Chrome's, as far as issue #28 needs it: a tab
+ * created with `background: true` is not selected; `Target.activateTarget` and a
+ * page's `Page.bringToFront` select it; closing the SELECTED tab selects its
+ * neighbour (the previous tab in the strip, as Chrome does for a tab with no
+ * opener), and closing any other tab changes nothing.
  *
  * ⭐ `firesLoadEvent` defaults TRUE because real Chrome fires it — measured at
  * 0.19s — and the default has to be the real world. It exists as a switch
@@ -84,8 +94,19 @@ export async function startFakeChrome(opts = {}) {
     createTargetHangs = false,
     firesLoadEvent = true,
     focusEmulationWorks = true,
+    userTabs = [],
   } = opts
   const targets = new Map()
+  // The tab strip of the person's one window, in order, and which tab it shows.
+  const strip = []
+  let selected = null
+  for (const title of userTabs) {
+    const id = randomBytes(16).toString('hex').toUpperCase()
+    targets.set(id, { id, type: 'page', title, url: `https://example.test/${title}` })
+    strip.push(id)
+  }
+  selected = strip[0] ?? null
+  const select = (id) => { if (targets.has(id)) selected = id }
   // `pageMethods` records what was asked of a PAGE endpoint, in order, so a test
   // can assert which route a command took — the quiet focus emulation or the
   // loud activation — rather than only that it printed something cheerful.
@@ -115,7 +136,14 @@ export async function startFakeChrome(opts = {}) {
     res.writeHead(404); res.end()
   })
 
+  // Upgraded sockets are not the HTTP server's any more: closeAllConnections()
+  // does not reach them, and one left half-open by a CLI that process.exit()s
+  // mid-session (click --trusted failing actionability does) makes close()
+  // wait for ever — which reads as the test hanging, not the harness.
+  const sockets = new Set()
   server.on('upgrade', (req, sock, head) => {
+    sockets.add(sock)
+    sock.on('close', () => sockets.delete(sock))
     const key = req.headers['sec-websocket-key']
     sock.write(
       'HTTP/1.1 101 Switching Protocols\r\n'
@@ -124,6 +152,7 @@ export async function startFakeChrome(opts = {}) {
       + `Sec-WebSocket-Accept: ${createHash('sha1').update(key + WS_GUID).digest('base64')}\r\n\r\n`,
     )
     const isBrowser = req.url.startsWith('/devtools/browser/')
+    const pageId = req.url.split('/').pop()
     onTextFrames(sock, head, (text) => {
       let msg
       try { msg = JSON.parse(text) } catch { return }
@@ -134,20 +163,28 @@ export async function startFakeChrome(opts = {}) {
           if (createTargetHangs) return
           const id = randomBytes(16).toString('hex').toUpperCase()
           targets.set(id, { id, type: 'page', title: '', url: msg.params?.url ?? 'about:blank' })
+          strip.push(id)
+          if (msg.params?.background === false || selected === null) select(id)
           return reply({ targetId: id })
         }
         if (msg.method === 'Target.activateTarget') {
           stats.activations++
+          select(msg.params?.targetId)
           return reply({})
         }
         if (msg.method === 'Target.closeTarget') {
-          targets.delete(msg.params?.targetId)
+          const id = msg.params?.targetId
+          const at = strip.indexOf(id)
+          targets.delete(id)
+          if (at >= 0) strip.splice(at, 1)
+          if (selected === id) selected = strip[Math.max(0, at - 1)] ?? null
           return reply({ success: true })
         }
         return reply({})
       }
       // Page endpoint: a silent renderer answers nothing at all.
       stats.pageMethods.push(msg.method)
+      if (msg.method === 'Page.bringToFront') select(pageId)
       if (msg.method === 'Runtime.evaluate') stats.evaluates++
       if (!rendererAnswers) return
       if (msg.method === 'Emulation.setFocusEmulationEnabled') {
@@ -185,9 +222,12 @@ export async function startFakeChrome(opts = {}) {
     port,
     endpoint: `http://127.0.0.1:${port}`,
     targetCount: () => targets.size,
+    /** Title (or id) of the tab the person's window shows. */
+    selectedTab: () => (selected && (targets.get(selected)?.title || selected)) ?? null,
     stats,
     async close() {
       server.closeAllConnections?.()
+      for (const sock of sockets) sock.destroy()
       await new Promise((r) => server.close(r))
     },
   }

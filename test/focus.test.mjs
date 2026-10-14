@@ -122,3 +122,59 @@ test('focus says so when the tab still reports itself hidden', async () => {
     })
   } finally { await chrome.close() }
 })
+
+// Issue #28, 2026-10-14. A quiet `focus` made the session's tab the SELECTED tab
+// of the person's Chrome window (forceForeground opened with Page.bringToFront).
+// No window moved, so it passed every check above — and the next time the person
+// brought Chrome forward and typed, the keys went into the automated tab: an
+// Outlook calendar, which made events named "A", "d", "w", "a", "cti" in their
+// real calendar. These replay the issue's steps against a window holding the
+// person's own tabs, and ask the one question that matters: which tab does that
+// window show afterwards?
+test('quiet focus, then close, leaves the person\'s window on the tab it showed (#28)', async () => {
+  const chrome = await startFakeChrome({ userTabs: ['mail', 'calendar'] })
+  try {
+    assert.equal(chrome.selectedTab(), 'mail', 'harness: the person starts on their mail tab')
+    await withTab(chrome, async (home) => {
+      assert.equal(chrome.selectedTab(), 'mail', 'opening a session tab must not select it')
+      const r = await run(chrome.endpoint, ['focus', '-s', 'focus-test'], home)
+      assert.equal(r.code, 0, `focus should succeed:\n${r.all}`)
+      assert.equal(
+        chrome.selectedTab(), 'mail',
+        `after a quiet focus the person's window must still show their tab — their typing goes there.\n`
+        + `page methods sent: ${chrome.stats.pageMethods.join(', ')}`,
+      )
+      const c = await run(chrome.endpoint, ['close', '-s', 'focus-test', '--tab'], home)
+      assert.equal(c.code, 0, `close should succeed:\n${c.all}`)
+      assert.equal(chrome.selectedTab(), 'mail', 'and still after the session tab is closed')
+    })
+  } finally { await chrome.close() }
+})
+
+test('click --trusted does not leave the person\'s window on the automated tab (#28)', async () => {
+  // The trusted path forces the same foreground emulation before it presses.
+  // The fake cannot make the element actionable, so the click itself fails —
+  // what is asserted is only what the attempt did to the person's window.
+  const chrome = await startFakeChrome({ userTabs: ['mail', 'calendar'] })
+  try {
+    await withTab(chrome, async (home) => {
+      await run(chrome.endpoint, ['click', 'e1', '-s', 'focus-test', '--trusted'], home)
+      assert.ok(
+        chrome.stats.pageMethods.includes('Emulation.setFocusEmulationEnabled'),
+        `the trusted path should still force focus emulation:\n${chrome.stats.pageMethods.join(', ')}`,
+      )
+      assert.equal(chrome.selectedTab(), 'mail', `the person's window must still show their tab`)
+    })
+  } finally { await chrome.close() }
+})
+
+test('focus --raise is the one route that selects the tab — and says it took the screen', async () => {
+  const chrome = await startFakeChrome({ userTabs: ['mail'] })
+  try {
+    await withTab(chrome, async (home) => {
+      const r = await run(chrome.endpoint, ['focus', '-s', 'focus-test', '--raise'], home)
+      assert.equal(r.code, 0, r.all)
+      assert.notEqual(chrome.selectedTab(), 'mail', '--raise genuinely brings the session tab forward')
+    })
+  } finally { await chrome.close() }
+})
