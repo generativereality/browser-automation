@@ -199,9 +199,14 @@ finish() {
   # for a version the registry is already serving (0.4.17: the version
   # endpoint said 200, install said notarget). And say when it fails — this
   # line used to swallow that and print nothing.
-  if npm install -g --prefer-online "$PKG@$v" >/dev/null 2>&1; then
+  # And show npm's own words when it fails: 0.5.1's install failed here with
+  # the output thrown away, and the same command by hand minutes later just
+  # worked — so whether it was the network or something real went unknown.
+  local npmlog; npmlog="$(mktemp "${TMPDIR:-/tmp}/ba-npm.XXXXXX")"
+  if npm install -g --prefer-online "$PKG@$v" >"$npmlog" 2>&1; then
     echo "  installed $(browser-automation --version)"
   else
+    tail -n 8 "$npmlog" | sed 's/^/    npm: /' >&2
     echo "  ⚠ could not install $PKG@$v globally — run: npm install -g --prefer-online $PKG@$v" >&2
   fi
 
