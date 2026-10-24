@@ -177,10 +177,12 @@ same one-action-per-snapshot rule as Playwright refs.
 
 Any command takes `--context <name>` (or `BAC_CONTEXT=<name>`) to act on a login
 context's Chrome instead of your own; a session opened in a context follows it
-without the flag. A new context starts as a copy of the automation
-profile (its extensions, and its logins and cookies; caches are left out), so
-sign out there of any account it is not for; `--empty-profile` when creating it
-starts it with nothing. Your ordinary Chrome profile is never copied.
+without the flag. A new context starts with the automation
+profile's extensions (a password manager stays signed in) but none of its site
+logins, and is not signed in to Chrome; `--full-copy` takes the logins too and
+`--empty-profile` takes nothing. Your ordinary Chrome profile is never copied.
+Each context's window gets its own colour. To keep a whole project in one
+context, set `BAC_CONTEXT` in the env of that project's Claude settings.
 
 ## Environment
 

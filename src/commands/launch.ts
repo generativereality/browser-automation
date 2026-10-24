@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs'
 import { launchScriptPath } from '../core/paths.js'
 import { cdpPort, closeBrowser, listPageTargets } from '../core/cdp.js'
 import { activeContextName } from '../core/context-store.js'
+import { personalizeIfNeeded } from '../core/context-launch.js'
 import { probeRenderer, explainRendererFailure, chromeLogPath } from '../core/renderer-health.js'
 import { migrateProfile, resolveProfile } from '../core/profile.js'
 import { chromeExecutable } from '../core/chrome-path.js'
@@ -70,6 +71,7 @@ export const launchCommand = define({
     if (m.outcome === 'moved') consola.success(`Profile ${m.detail} — logins travel with it.`)
     else if (m.outcome === 'refused' || m.outcome === 'failed') consola.warn(`Profile not moved: ${m.detail}`)
     else if (m.outcome === 'in-use') consola.info(`Profile not moved yet: ${m.detail}`)
+    if (!ctx.values.status) await personalizeIfNeeded()
 
     // The binary is decided here too (core/chrome-path.ts) and passed down, so
     // the script never has its own idea of where Chrome lives. When none is
@@ -159,6 +161,7 @@ async function launchWindows(statusOnly: boolean, restart: boolean): Promise<boo
   const m = migrateProfile()
   if (m.outcome === 'moved') consola.success(`Profile ${m.detail} — logins travel with it.`)
   else if (m.outcome === 'refused' || m.outcome === 'failed') consola.warn(`Profile not moved: ${m.detail}`)
+  await personalizeIfNeeded()
 
   const r = await startChrome(port, m.dir, chromeLogPath())
   switch (r.outcome) {

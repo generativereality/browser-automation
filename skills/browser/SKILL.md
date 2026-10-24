@@ -217,36 +217,56 @@ browser-automation read -s cf                 # later runs: already authenticate
 
 There's no `state-save`/`state-load` to manage — the profile *is* the auth store.
 
-### A second account next to the first — `--context <name>`
+### A second account, or a project of its own — `--context <name>`
 
 The profile holds ONE login per site. For a second account beside it (two
-Cloudflare dashboards, a client's Google account next to the user's), open the
-session in a named **login context**: a separate Chrome with its own profile,
-port and window, started on demand. The user's own Chrome is not touched.
+Cloudflare dashboards), or to keep a whole project's logins apart from the
+user's (a client's Google Workspace, AWS), open the session in a named **login
+context**: a separate Chrome with its own profile, port and window, started on
+demand. The user's own Chrome is not touched.
 
 ```bash
 browser-automation new -s cf2 --context cloudflare-2 https://dash.cloudflare.com
-# FIRST time only: in the new window (a copy of the automation profile), the user
-# signs out of the first account and signs in to the other one
+# FIRST time only: the user signs in to the account in the new (coloured) window
 browser-automation read -s cf2                # follows the session's context — no flag
 ```
+
+- **A project uses one context for all its sessions: set `BAC_CONTEXT`** in the
+  env of the project's Claude settings — e.g. `"env": {"BAC_CONTEXT": "gapminder"}`
+  in `.claude/settings.json`, or in a separate account's `$CLAUDE_CONFIG_DIR/settings.json`.
+  Then every NEW session, `-m`/`-t`, `list` and `doctor` use that Chrome with no
+  flag, and nothing of the project lands in the user's main profile. ⛔ If a
+  project should be separate and `BAC_CONTEXT` is not set, ask before working in
+  the main profile — a logout or sign-in there is the user's real account.
 
 - **A session remembers its context**: later commands on `-s cf2` go to that
   Chrome without `--context`. A session can't change context; use another `-s`.
 - **It is a real profile** (`~/.browser-automation/contexts/<name>/chrome-profile`):
   logins and extensions persist across restarts, like the main profile.
-- **It starts as a copy of the automation profile** (caches left out, ~0.9 GB,
-  a few seconds): the same extensions work at once — a password manager, for
-  passkeys — and it is signed in to the same accounts. So in the new window,
-  **sign out of the account this context is NOT for** (e.g. the first Cloudflare
-  account), then sign in to the other. `--empty-profile` (only when the context
-  is first made) starts it with nothing instead. The user's ordinary Chrome
-  profile is never copied.
+- **How a new context starts** — chosen once, when it is first made:
+
+  | | extensions (password manager…) | site logins, cookies | Chrome's own Google sign-in |
+  |---|---|---|---|
+  | default | ✅ copied, still signed in | ❌ none | ❌ signed out |
+  | `--full-copy` | ✅ | ✅ every one, personal too | ✅ — may become the DEFAULT Google account |
+  | `--empty-profile` | ❌ | ❌ | ❌ |
+
+  The source is the AUTOMATION profile, never the user's ordinary Chrome. With
+  `--full-copy`, Google pages pick the copied personal account and `?authuser=`
+  does not move them: open
+  `https://accounts.google.com/AccountChooser?Email=<work address>&continue=<url>`.
+- **Each context's window has its own colour**, and its profile is named after
+  it, so the user can tell the Chromes apart (`context` names the colours).
+  Contexts made before 0.6.1 get theirs at their next start.
 - **Starting it takes the screen once** — a cold Chrome launch comes to the
-  front (issue #25). `goto`/`new` start it when it isn't running; `context stop
-  <name>` quits it; `context forget <name> [--delete-profile]` removes it.
+  front (issue #25), and keys the user is typing can land in it. `goto`/`new`
+  start it when it isn't running; `context stop <name>` quits it; `context
+  forget <name> [--delete-profile]` removes it.
+- **`context` lists every Chrome** — the user's own and each context's — with
+  port, pid, colour and sessions. `list` says which Chrome its tabs are in.
 - `-m`/`-t`, `list`, `doctor`, `launch` act on the user's Chrome unless given
-  `--context <name>` (or `BAC_CONTEXT`).
+  `--context <name>` (or `BAC_CONTEXT`). A session always stays in the Chrome
+  it was opened in; only an explicit `--context` that disagrees is refused.
 - ⛔ **Not a second Chrome profile in the main Chrome, not an incognito-style
   CDP context.** A second profile becomes Chrome's default while its window is
   open — every other session's new tab opens in it, logged out. A CDP
