@@ -55,7 +55,12 @@ export const contextCommand = define({
       if (!(await running(r))) { consola.info(`"${r.name}" is not running.`); return }
       process.env.BROWSER_AUTOMATION_CONTEXT = r.name // so closeBrowser() addresses ITS Chrome
       await closeBrowser()
-      consola.success(`Asked the Chrome for "${r.name}" to quit. Its logins stay in its profile; the next \`goto --context ${r.name}\` starts it again.`)
+      const users = listAllSessions().filter((s) => s.context === r.name).map((s) => s.name)
+      consola.success(
+        `Asked the Chrome for "${r.name}" to quit. Its logins stay in its profile; the next `
+        + (users.length ? `\`goto -s ${users[0]} <url>\` (or any goto in one of its sessions)` : `\`goto -s <session> --context ${r.name} <url>\``)
+        + ' starts it again.',
+      )
       return
     }
 
