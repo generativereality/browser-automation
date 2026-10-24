@@ -4,7 +4,6 @@
 import { listTargets, listPageTargets, targetWsUrl, type CdpTarget } from './cdp.js'
 import { loadSession, defaultSessionName } from './session.js'
 import { resolveLiveTarget } from './target.js'
-import { rememberContextOf } from './contexts.js'
 import type { TargetOpts } from './args.js'
 
 /** Resolve a -t value: exact targetId, or a unique prefix (so the truncated id
@@ -65,14 +64,6 @@ async function matchIframe(match: string, first?: boolean): Promise<CdpTarget> {
 /** Resolve to an EXISTING live tab — or, with `-F`, a cross-origin child iframe
  *  of one. Never creates. For read/snapshot/click/fill/eval/close. */
 export async function resolveExistingTargetId(opts: TargetOpts): Promise<string> {
-  const targetId = await resolveExisting(opts)
-  // A tab in a login context: keep that context's cookies (core/contexts.ts).
-  // No-op, and no extra CDP call, when no context exists.
-  await rememberContextOf(targetId)
-  return targetId
-}
-
-async function resolveExisting(opts: TargetOpts): Promise<string> {
   // -F descends into an OOPIF. It resolves to the iframe's own target, which the
   // caller then drives with the identical machinery used for a page target.
   if (opts.frame) {
@@ -97,17 +88,11 @@ async function resolveExisting(opts: TargetOpts): Promise<string> {
 }
 
 /** Resolve, creating+binding a session tab only in pure session mode. For goto. */
-export async function resolveOrCreateTargetId(
-  opts: TargetOpts,
-  { context }: { context?: string } = {},
-): Promise<{ targetId: string; created: boolean; contextRestored?: { name: string; cookies: number } }> {
+export async function resolveOrCreateTargetId(opts: TargetOpts): Promise<{ targetId: string; created: boolean }> {
   if (opts.target || opts.match) {
-    if (context !== undefined) throw new Error('--context applies to a session\'s tab (-s); a tab picked with -m/-t is already in whatever login it is in')
     return { targetId: await resolveExistingTargetId(opts), created: false }
   }
-  const r = await resolveLiveTarget(opts.session || defaultSessionName(), { context })
-  if (!r.created) await rememberContextOf(r.targetId)
-  return r
+  return resolveLiveTarget(opts.session || defaultSessionName())
 }
 
 export { matchOne, matchIframe }

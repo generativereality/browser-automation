@@ -1,6 +1,7 @@
 import { cli, define, type Command } from 'gunshi'
 import pkg from '../../package.json'
 import { canonicalize, restorePositionals, type ArgSpec } from '../core/argv.js'
+import { ContextError, selectContext } from '../core/context-select.js'
 import { newCommand } from './new.js'
 import { gotoCommand } from './goto.js'
 import { snapshotCommand } from './snapshot.js'
@@ -85,6 +86,14 @@ export async function run(): Promise<void> {
   // CONTAINS `--` as an option, which made any prose mentioning a long flag
   // (or a markdown `---` rule) unsendable through `fill`.
   const sub = argv[0]
+  // Which Chrome: the user's own, or a login context's (core/context-select.ts).
+  // Before anything reads cdpPort(), and it takes `--context` out of argv.
+  try {
+    argv = sub === undefined ? argv : [sub, ...(await selectContext(sub, argv.slice(1)))]
+  } catch (e) {
+    if (e instanceof ContextError) { console.error(`Error: ${e.message}`); process.exitCode = 1; return }
+    throw e
+  }
   const command = sub === undefined ? undefined : subCommands.get(sub)
   if (sub !== undefined && command) {
     const canonical = canonicalize(sub, argv.slice(1), (command.args ?? {}) as Record<string, ArgSpec>)

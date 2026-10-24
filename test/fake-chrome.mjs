@@ -74,16 +74,6 @@ function onTextFrames(sock, head, cb) {
  *                             `selectedTab()` then answers which tab that window
  *                             shows — what the person's typing goes into.
  *
- * Browser contexts (login contexts, issue #31) are modelled as Chrome 155
- * behaves, measured 2026-10-24: `Target.createBrowserContext` makes one with its
- * own cookie jar; `Target.getBrowserContexts` lists ONLY those, never the
- * default; `Target.createTarget` with an unknown `browserContextId` fails; and
- * ⛔ `Storage.*` with an unknown `browserContextId` silently acts on the DEFAULT
- * jar — the hazard the CLI must never trigger. `restart()` forgets every
- * context and tab, as a relaunched Chrome does; the default jar survives (it
- * is the profile on disk). `browserCalls` records every browser-level call
- * with its params, so a test can assert what the CLI asked for.
- *
  * The selected-tab model is Chrome's, as far as issue #28 needs it: a tab
  * created with `background: true` is not selected; `Target.activateTarget` and a
  * page's `Page.bringToFront` select it; closing the SELECTED tab selects its
@@ -107,16 +97,12 @@ export async function startFakeChrome(opts = {}) {
     userTabs = [],
   } = opts
   const targets = new Map()
-  const DEFAULT_CTX = 'DEFAULTCONTEXT0000000000000000000'
-  // jars: context id -> cookies. The default jar is the user's profile.
-  const jars = new Map([[DEFAULT_CTX, []]])
-  const jarFor = (id) => (id && jars.has(id) ? jars.get(id) : jars.get(DEFAULT_CTX))
   // The tab strip of the person's one window, in order, and which tab it shows.
   const strip = []
   let selected = null
   for (const title of userTabs) {
     const id = randomBytes(16).toString('hex').toUpperCase()
-    targets.set(id, { id, type: 'page', title, url: `https://example.test/${title}`, browserContextId: DEFAULT_CTX })
+    targets.set(id, { id, type: 'page', title, url: `https://example.test/${title}` })
     strip.push(id)
   }
   selected = strip[0] ?? null
@@ -124,8 +110,7 @@ export async function startFakeChrome(opts = {}) {
   // `pageMethods` records what was asked of a PAGE endpoint, in order, so a test
   // can assert which route a command took — the quiet focus emulation or the
   // loud activation — rather than only that it printed something cheerful.
-  const stats = { activations: 0, createTargets: 0, evaluates: 0, pageMethods: [], browserCalls: [] }
-
+  const stats = { activations: 0, createTargets: 0, evaluates: 0, pageMethods: [] }
   // Whether the renderer currently believes it is focused. A real Chrome flips
   // this when Emulation.setFocusEmulationEnabled lands; an older build that does
   // not support the command leaves it false, which is the arm `focus` has to
@@ -146,7 +131,7 @@ export async function startFakeChrome(opts = {}) {
       return json(res, { Browser: 'FakeChrome/0.0.0', webSocketDebuggerUrl: ws('/devtools/browser/fake') })
     }
     if (path === '/json/list' || path === '/json') {
-      return json(res, [...targets.values()].map(({ browserContextId: _c, ...t }) => ({ ...t, webSocketDebuggerUrl: ws(`/devtools/page/${t.id}`) })))
+      return json(res, [...targets.values()].map((t) => ({ ...t, webSocketDebuggerUrl: ws(`/devtools/page/${t.id}`) })))
     }
     res.writeHead(404); res.end()
   })
@@ -173,45 +158,11 @@ export async function startFakeChrome(opts = {}) {
       try { msg = JSON.parse(text) } catch { return }
       const reply = (result) => sendText(sock, JSON.stringify({ id: msg.id, result }))
       if (isBrowser) {
-        stats.browserCalls.push({ method: msg.method, params: msg.params ?? {} })
-        const fail = (message) => sendText(sock, JSON.stringify({ id: msg.id, error: { code: -32000, message } }))
-        if (msg.method === 'Target.createBrowserContext') {
-          const id = randomBytes(16).toString('hex').toUpperCase()
-          jars.set(id, [])
-          return reply({ browserContextId: id })
-        }
-        if (msg.method === 'Target.getBrowserContexts') {
-          return reply({ browserContextIds: [...jars.keys()].filter((k) => k !== DEFAULT_CTX) })
-        }
-        if (msg.method === 'Target.disposeBrowserContext') {
-          const id = msg.params?.browserContextId
-          if (!jars.has(id) || id === DEFAULT_CTX) return fail(`Failed to find context with id ${id}`)
-          jars.delete(id)
-          for (const [tid, t] of targets) if (t.browserContextId === id) targets.delete(tid)
-          return reply({})
-        }
-        if (msg.method === 'Target.getTargets') {
-          return reply({ targetInfos: [...targets.values()].map((t) => ({ targetId: t.id, type: t.type, title: t.title, url: t.url, browserContextId: t.browserContextId })) })
-        }
-        if (msg.method === 'Storage.getCookies') {
-          return reply({ cookies: [...jarFor(msg.params?.browserContextId)] })
-        }
-        if (msg.method === 'Storage.setCookies') {
-          const jar = jarFor(msg.params?.browserContextId)
-          for (const c of msg.params?.cookies ?? []) {
-            const i = jar.findIndex((x) => x.name === c.name && x.domain === c.domain && x.path === c.path)
-            const full = { expires: -1, session: c.expires === undefined, ...c }
-            if (i >= 0) jar[i] = full; else jar.push(full)
-          }
-          return reply({})
-        }
         if (msg.method === 'Target.createTarget') {
           stats.createTargets++
           if (createTargetHangs) return
-          const ctxId = msg.params?.browserContextId
-          if (ctxId !== undefined && !jars.has(ctxId)) return fail(`Failed to find browser context with id ${ctxId}`)
           const id = randomBytes(16).toString('hex').toUpperCase()
-          targets.set(id, { id, type: 'page', title: '', url: msg.params?.url ?? 'about:blank', browserContextId: ctxId ?? DEFAULT_CTX })
+          targets.set(id, { id, type: 'page', title: '', url: msg.params?.url ?? 'about:blank' })
           strip.push(id)
           if (msg.params?.background === false || selected === null) select(id)
           return reply({ targetId: id })
@@ -271,20 +222,6 @@ export async function startFakeChrome(opts = {}) {
     port,
     endpoint: `http://127.0.0.1:${port}`,
     targetCount: () => targets.size,
-    DEFAULT_CTX,
-    /** The cookies in a context's jar (the default jar when no id is given). */
-    cookies: (id) => [...jarFor(id)],
-    /** Put a cookie straight into a jar — a login done by hand in that window. */
-    addCookie: (id, cookie) => { jarFor(id).push({ path: '/', expires: -1, session: true, ...cookie }) },
-    /** Ids of the CDP-created contexts that exist now. */
-    contexts: () => [...jars.keys()].filter((k) => k !== DEFAULT_CTX),
-    /** Which context a target is in. */
-    contextOf: (targetId) => targets.get(targetId)?.browserContextId ?? null,
-    /** A relaunched Chrome: every CDP context and every tab gone; the profile's own jar survives. */
-    restart: () => {
-      for (const k of [...jars.keys()]) if (k !== DEFAULT_CTX) jars.delete(k)
-      targets.clear(); strip.length = 0; selected = null
-    },
     /** Title (or id) of the tab the person's window shows. */
     selectedTab: () => (selected && (targets.get(selected)?.title || selected)) ?? null,
     stats,

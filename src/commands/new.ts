@@ -3,10 +3,11 @@ import { consola } from 'consola'
 import { defaultSessionName, saveSession, loadSession } from '../core/session.js'
 import { normalizeUrl } from '../core/target.js'
 import { createTab } from '../core/cdp.js'
-import { ensureContext } from '../core/contexts.js'
 import { ensureRenderer } from '../core/renderer-wake.js'
 import { probeRenderer, explainRendererFailure, withRendererDiagnosis } from '../core/renderer-health.js'
 import { wantsShow, showTab, describeNotShown } from '../core/show.js'
+import { ensureContextChrome } from '../core/context-launch.js'
+import { activeContextName } from '../core/context-store.js'
 
 export const newCommand = define({
   name: 'new',
@@ -14,11 +15,6 @@ export const newCommand = define({
   args: {
     session: { type: 'string', short: 's', description: 'Session name (default: $BAC_SESSION or "default")' },
     force: { type: 'boolean', short: 'f', description: 'Open a new tab even if the session already has one' },
-    context: {
-      type: 'string',
-      short: 'c',
-      description: 'Open the tab in a named LOGIN CONTEXT — its own cookie jar and window, so a second account can be signed in next to your own (e.g. two Cloudflare dashboards). Created on first use; its cookies are kept on disk, so it stays logged in across Chrome restarts. See `browser-automation context`.',
-    },
     show: {
       type: 'boolean',
       description: 'Make this the SELECTED tab in its Chrome window, so someone watching Chrome sees it — only when the automation Chrome is already the frontmost app, so it never brings Chrome over another app. Default on with BAC_SHOW_TAB=1.',
@@ -29,6 +25,9 @@ export const newCommand = define({
     // url is an optional positional (args-tokens requires declared positionals).
     const url = ctx.positionals[1] ? normalizeUrl(ctx.positionals[1]) : 'about:blank'
 
+    // A login context's Chrome is started the first time it is needed.
+    await ensureContextChrome()
+    const context = activeContextName()
     const existing = loadSession(name)
     if (existing && !ctx.values.force) {
       consola.warn(`Session "${name}" already maps to a tab. Use --force to open another, or just \`browser-automation goto -s ${name} <url>\`.`)
@@ -36,19 +35,8 @@ export const newCommand = define({
     // `Target.createTarget` can HANG on a browser that cannot launch renderers,
     // rather than fail — so this half needs the diagnosis too, or the operator
     // gets a bare 30s timeout for the one failure that really is permanent.
-    const contextName = ctx.values.context as string | undefined
-    let browserContextId: string | undefined
-    if (contextName) {
-      const c = await ensureContext(contextName)
-      browserContextId = c.browserContextId
-      if (c.created) {
-        consola.info(c.restored
-          ? `[${name}] context "${contextName}": re-created with ${c.restored} saved cookie(s) — its logins are back.`
-          : `[${name}] context "${contextName}": new, empty login context (its own window). Sign in there once; it is kept.`)
-      }
-    }
-    const targetId = await withRendererDiagnosis(() => createTab(url, { browserContextId }))
-    saveSession({ name, targetId, url, createdAt: new Date().toISOString(), ...(contextName ? { context: contextName } : {}) })
+    const targetId = await withRendererDiagnosis(() => createTab(url))
+    saveSession({ name, targetId, url, createdAt: new Date().toISOString(), ...(context ? { context } : {}) })
 
     // `Target.createTarget` is a browser-level call and succeeds even when the
     // renderer behind the new tab is not ready — it returns a target id for a
@@ -82,6 +70,6 @@ export const newCommand = define({
       const note = describeNotShown(outcome)
       if (note) consola.info(note)
     }
-    consola.success(`[${name}] opened ${shown ? 'and showed' : 'background'} tab ${targetId.slice(0, 12)}…${contextName ? ` in context "${contextName}"` : ''} → ${url}`)
+    consola.success(`[${name}] opened ${shown ? 'and showed' : 'background'} tab ${targetId.slice(0, 12)}…${context ? ` in context "${context}"` : ''} → ${url}`)
   },
 })

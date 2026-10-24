@@ -46,6 +46,8 @@ import { execFileSync } from 'node:child_process'
 import { lstatSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { activeContext } from './context-store.js'
+
 
 /** The default, under ~, reachable by every host. */
 export function homeProfileDir(): string {
@@ -79,7 +81,7 @@ export interface ProfileChoice {
   /** The directory to pass as --user-data-dir. */
   dir: string
   /** Why this one. */
-  source: 'env' | 'home' | 'legacy'
+  source: 'env' | 'home' | 'legacy' | 'context'
 }
 
 /**
@@ -90,6 +92,9 @@ export interface ProfileChoice {
  * to create on first launch.
  */
 export function resolveProfile(): ProfileChoice {
+  // A login context's Chrome has a profile of its own (core/context-store.ts).
+  const ctx = activeContext()
+  if (ctx) return { dir: ctx.profileDir, source: 'context' }
   const explicit = process.env.BROWSER_AUTOMATION_PROFILE
   if (explicit) return { dir: explicit, source: 'env' }
   const home = homeProfileDir()
@@ -129,7 +134,7 @@ function inUse(dir: string): boolean {
 /** Move the legacy profile into the home folder, if that is both needed and safe. */
 export function migrateProfile(): Migration {
   const choice = resolveProfile()
-  if (choice.source === 'env') return { outcome: 'explicit', dir: choice.dir }
+  if (choice.source === 'env' || choice.source === 'context') return { outcome: 'explicit', dir: choice.dir }
   if (choice.source === 'home') {
     return { outcome: presence(choice.dir) === 'present' ? 'current' : 'fresh', dir: choice.dir }
   }

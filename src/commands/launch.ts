@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { launchScriptPath } from '../core/paths.js'
 import { cdpPort, closeBrowser, listPageTargets } from '../core/cdp.js'
-import { saveAllContexts } from '../core/contexts.js'
+import { activeContextName } from '../core/context-store.js'
 import { probeRenderer, explainRendererFailure, chromeLogPath } from '../core/renderer-health.js'
 import { migrateProfile, resolveProfile } from '../core/profile.js'
 import { chromeExecutable } from '../core/chrome-path.js'
@@ -38,7 +38,9 @@ export const launchCommand = define({
     // is never implied — not by a failed launch, not by an unhealthy doctor.
     // Something has to type it.
     const port = ['--port', String(cdpPort())]
-    const bash = (extra: string[]) => spawnSync('bash', [script, ...port, ...extra], { stdio: 'inherit' })
+    // The script names the context in its hint; it decides nothing from it.
+    const env = { ...process.env, BA_CONTEXT_FLAG: activeContextName() ?? '' }
+    const bash = (extra: string[]) => spawnSync('bash', [script, ...port, ...extra], { stdio: 'inherit', env })
 
     // `--status` asks only about the port; it neither moves nor opens anything.
     if (ctx.values.status) process.exit(bash(['--status']).status ?? 1)
@@ -54,7 +56,6 @@ export const launchCommand = define({
       // and "how many tabs am I closing" is the one thing to say before doing it.
       const tabs = await listPageTargets().then((t) => t.length).catch(() => null)
       if (tabs !== null) consola.info(`Restarting Chrome on :${cdpPort()} — closing ${tabs} open tab(s).`)
-      await keepContextLogins()
       await closeBrowser().catch(() => {})
       const stop = bash(['--stop', '--profile', resolveProfile().dir])
       if (stop.status !== 0) process.exit(stop.status ?? 1)
@@ -134,16 +135,6 @@ export const launchCommand = define({
  * the script prints, so an agent reading either learns the same thing.
  * Returns false on a failure that must stop `launch` before the health check.
  */
-/**
- * Login contexts live in memory and die with this Chrome; their cookies are
- * what brings them back (core/contexts.ts). Save them while there is still a
- * browser to read them from.
- */
-async function keepContextLogins(): Promise<void> {
-  const { saved } = await saveAllContexts().catch(() => ({ saved: [] as string[] }))
-  if (saved.length) consola.info(`Saved the logins of ${saved.length} context(s) (${saved.join(', ')}); they come back on their next use.`)
-}
-
 async function launchWindows(statusOnly: boolean, restart: boolean): Promise<boolean> {
   const port = cdpPort()
   if (statusOnly) {
@@ -154,7 +145,6 @@ async function launchWindows(statusOnly: boolean, restart: boolean): Promise<boo
   if (restart) {
     const tabs = await listPageTargets().then((t) => t.length).catch(() => null)
     if (tabs !== null) consola.info(`Restarting Chrome on :${port} — closing ${tabs} open tab(s).`)
-    await keepContextLogins()
     try {
       const r = await stopOurChrome(port, (s) => consola.warn(s))
       if (r === 'not-ours') {
@@ -174,12 +164,12 @@ async function launchWindows(statusOnly: boolean, restart: boolean): Promise<boo
   switch (r.outcome) {
     case 'already-running':
       consola.log(`Already running on :${port} — the port is held.`)
-      consola.log('Drive it with: browser-automation goto -s <session> <url>')
+      consola.log(`Drive it with: browser-automation goto -s <session>${activeContextName() ? ` --context ${activeContextName()}` : ''} <url>`)
       consola.log('(Port held is not health. Check it works: browser-automation doctor)')
       return true
     case 'launched':
       consola.log(`Chrome launched on :${port} in ${r.seconds}s (profile: ${m.dir}, log: ${chromeLogPath()})`)
-      consola.log('Drive it with: browser-automation goto -s <session> <url>')
+      consola.log(`Drive it with: browser-automation goto -s <session>${activeContextName() ? ` --context ${activeContextName()}` : ''} <url>`)
       return true
     case 'not-ours':
       consola.error(

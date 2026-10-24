@@ -1,20 +1,11 @@
-// Login contexts (`--context <name>`, issue #31): a second account signed in
-// next to the person's own, in the one shared Chrome.
-//
-// What must hold, each pinned below against the fake Chrome (whose context
-// model is Chrome 155's, measured 2026-10-24 — see test/fake-chrome.mjs):
-//   - a context tab is created IN a CDP context; a plain tab is not, and a
-//     plain run creates no context at all;
-//   - a login made in the context's window is saved to disk, privately, and
-//     the person's own cookies are never touched;
-//   - after Chrome restarts, the session's next `goto` re-creates the context
-//     and puts the saved login back before the page loads;
-//   - ⛔ the CLI never sends a cookie call for a context id Chrome does not
-//     know, because Chrome applies those to the DEFAULT jar — the person's own.
+// Login contexts (`--context <name>`, issue #31): a separate Chrome per extra
+// account, next to the person's own. Two fake Chromes stand in for the two
+// browsers; what is pinned is that every command reaches the RIGHT one —
+// a command that drove the wrong Chrome would do its work in the wrong account.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, readFileSync, statSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -24,13 +15,14 @@ const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.j
 
 function run(endpoint, argv, home) {
   return new Promise((resolve) => {
+    const { BAC_CONTEXT: _c, BAC_SESSION: _s, BROWSER_AUTOMATION_CONTEXT: _a, ...base } = process.env
     const child = spawn(process.execPath, [CLI, ...argv], {
       env: {
-        ...process.env,
+        ...base,
         HOME: home,
         NO_COLOR: '1',
         NO_UPDATE_NOTIFIER: '1',
-        BROWSER_AUTOMATION_CDP: endpoint,
+        BROWSER_AUTOMATION_CDP: endpoint, // the person's own Chrome
         BROWSER_AUTOMATION_RENDERER_GRACE: '200',
         BROWSER_AUTOMATION_RENDERER_BUDGET: '400',
       },
@@ -44,141 +36,140 @@ function run(endpoint, argv, home) {
   })
 }
 
-async function withHome(fn) {
+/** The person's Chrome, plus a context "work" whose Chrome is a second fake. */
+async function twoChromes(fn) {
+  const own = await startFakeChrome()
+  const work = await startFakeChrome()
   const home = mkdtempSync(join(tmpdir(), 'ba-ctx-'))
-  try { return await fn(home) } finally { rmSync(home, { recursive: true, force: true }) }
+  const profileDir = join(home, '.browser-automation', 'contexts', 'work', 'chrome-profile')
+  mkdirSync(profileDir, { recursive: true })
+  writeFileSync(join(home, '.browser-automation', 'contexts', 'work.json'),
+    JSON.stringify({ name: 'work', port: work.port, profileDir, createdAt: new Date().toISOString() }))
+  try {
+    await fn({ own, work, home, profileDir, ba: (...argv) => run(own.endpoint, argv, home) })
+  } finally {
+    await own.close(); await work.close()
+    rmSync(home, { recursive: true, force: true })
+  }
 }
 
-const sessionFile = (home, name) => JSON.parse(readFileSync(join(home, '.browser-automation', 'sessions', `${name}.json`), 'utf8'))
-const contextFile = (home, name) => join(home, '.browser-automation', 'contexts', `${name}.json`)
-const created = (chrome) => chrome.stats.browserCalls.filter((c) => c.method === 'Target.createTarget')
+const session = (home, name) => {
+  const f = join(home, '.browser-automation', 'sessions', `${name}.json`)
+  return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null
+}
 
-test('new --context opens the tab in its own browser context, and records it on the session', async () => {
-  const chrome = await startFakeChrome({ userTabs: ['mail'] })
-  try {
-    await withHome(async (home) => {
-      const r = await run(chrome.endpoint, ['new', '-s', 'cf2', '--context', 'cloudflare-2'], home)
-      assert.equal(r.code, 0, r.all)
-      const [ctxId] = chrome.contexts()
-      assert.ok(ctxId, 'a browser context should have been created')
-      const call = created(chrome).at(-1)
-      assert.equal(call.params.browserContextId, ctxId, `the tab must be created IN the context:\n${JSON.stringify(call)}`)
-      assert.equal(call.params.background, true, 'still a background tab')
-      assert.equal(sessionFile(home, 'cf2').context, 'cloudflare-2')
-      assert.equal(chrome.selectedTab(), 'mail', "the person's window still shows their tab")
-      assert.match(r.all, /context "cloudflare-2"/)
-    })
-  } finally { await chrome.close() }
+test('new --context opens the tab in the context\'s Chrome, not the person\'s', async () => {
+  await twoChromes(async ({ own, work, home, ba }) => {
+    const r = await ba('new', '-s', 'cf2', '--context', 'work', 'https://dash.example.test')
+    assert.equal(r.code, 0, r.all)
+    assert.equal(work.stats.createTargets, 1, 'the tab is created in the context\'s Chrome')
+    assert.equal(own.stats.createTargets, 0, 'and nothing in the person\'s')
+    assert.equal(session(home, 'cf2').context, 'work')
+    assert.match(r.all, /in context "work"/)
+  })
 })
 
-test('a plain new tab names no context, and creates none', async () => {
-  const chrome = await startFakeChrome()
-  try {
-    await withHome(async (home) => {
-      const r = await run(chrome.endpoint, ['new', '-s', 'plain'], home)
-      assert.equal(r.code, 0, r.all)
-      assert.equal(created(chrome).at(-1).params.browserContextId, undefined)
-      assert.equal(chrome.contexts().length, 0)
-      assert.ok(!chrome.stats.browserCalls.some((c) => c.method.startsWith('Storage.')), 'no cookie calls for a plain run')
-      assert.ok(!existsSync(join(home, '.browser-automation', 'contexts')), 'and nothing written for contexts')
-    })
-  } finally { await chrome.close() }
+test('a session follows its context with no flag', async () => {
+  await twoChromes(async ({ own, work, ba }) => {
+    assert.equal((await ba('new', '-s', 'cf2', '--context', 'work')).code, 0)
+    const r = await ba('goto', '-s', 'cf2', 'https://dash.example.test')
+    assert.equal(r.code, 0, r.all)
+    assert.ok(work.stats.pageMethods.includes('Page.navigate'), 'navigated in the context\'s Chrome')
+    assert.ok(!own.stats.pageMethods.includes('Page.navigate'), 'not in the person\'s')
+  })
 })
 
-test('a login made in the context window is saved privately, and the person\'s own cookies are untouched', async () => {
-  const chrome = await startFakeChrome()
-  try {
-    await withHome(async (home) => {
-      chrome.addCookie(chrome.DEFAULT_CTX, { name: 'own', value: 'mine', domain: '.cloudflare.com' })
-      assert.equal((await run(chrome.endpoint, ['new', '-s', 'cf2', '--context', 'cloudflare-2'], home)).code, 0)
-      const [ctxId] = chrome.contexts()
-      // The person signs in by hand in the context's window...
-      chrome.addCookie(ctxId, { name: 'CF_Authorization', value: 'second-account', domain: '.cloudflare.com' })
-      // ...and the next command that touches the tab keeps it.
-      const r = await run(chrome.endpoint, ['focus', '-s', 'cf2'], home)
-      assert.equal(r.code, 0, r.all)
-      const f = contextFile(home, 'cloudflare-2')
-      const saved = JSON.parse(readFileSync(f, 'utf8'))
-      assert.deepEqual(saved.cookies.map((c) => c.value), ['second-account'], 'only the context\'s cookie is saved')
-      if (process.platform !== 'win32') {
-        assert.equal(statSync(f).mode & 0o777, 0o600, 'the saved login is readable by this user only')
-        assert.equal(statSync(dirname(f)).mode & 0o777, 0o700)
-      }
-      assert.deepEqual(chrome.cookies(chrome.DEFAULT_CTX).map((c) => c.value), ['mine'], "the person's own jar is unchanged")
-    })
-  } finally { await chrome.close() }
+test('plain commands still drive the person\'s own Chrome', async () => {
+  await twoChromes(async ({ own, work, home, ba }) => {
+    const r = await ba('new', '-s', 'plain', 'https://a.example.test')
+    assert.equal(r.code, 0, r.all)
+    assert.equal(own.stats.createTargets, 1)
+    assert.equal(work.stats.createTargets, 0)
+    assert.equal(session(home, 'plain').context, undefined)
+  })
 })
 
-test('after Chrome restarts, goto re-creates the context and puts the saved login back', async () => {
-  const chrome = await startFakeChrome()
-  try {
-    await withHome(async (home) => {
-      assert.equal((await run(chrome.endpoint, ['new', '-s', 'cf2', '--context', 'cloudflare-2'], home)).code, 0)
-      const [oldId] = chrome.contexts()
-      chrome.addCookie(oldId, { name: 'CF_Authorization', value: 'second-account', domain: '.cloudflare.com' })
-      assert.equal((await run(chrome.endpoint, ['context', 'save', 'cloudflare-2'], home)).code, 0)
-
-      chrome.restart()
-      const atRestart = chrome.stats.browserCalls.length
-      const r = await run(chrome.endpoint, ['goto', '-s', 'cf2', 'https://dash.cloudflare.com'], home)
-      assert.equal(r.code, 0, r.all)
-      assert.match(r.all, /re-created with 1 saved cookie/, `goto should say the login came back:\n${r.all}`)
-      const [newId] = chrome.contexts()
-      assert.ok(newId && newId !== oldId, 'a fresh context, since the old id died with Chrome')
-      assert.deepEqual(chrome.cookies(newId).map((c) => c.value), ['second-account'], 'the saved login is back in it')
-      assert.equal(chrome.contextOf(sessionFile(home, 'cf2').targetId), newId, 'and the session\'s new tab is in it')
-      assert.deepEqual(chrome.cookies(chrome.DEFAULT_CTX), [], "nothing leaked into the person's jar")
-      const afterRestart = chrome.stats.browserCalls.slice(atRestart)
-      assert.deepEqual(afterRestart.filter((c) => c.method.startsWith('Storage.') && c.params.browserContextId !== newId), [],
-        'after the restart, every cookie call names the NEW context: the dead id would hit the default jar')
-    })
-  } finally { await chrome.close() }
+test('a session cannot be moved into another context', async () => {
+  await twoChromes(async ({ work, ba }) => {
+    assert.equal((await ba('new', '-s', 'plain')).code, 0)
+    const r = await ba('goto', '-s', 'plain', '--context', 'work', 'https://a.example.test')
+    assert.notEqual(r.code, 0, `must refuse:\n${r.all}`)
+    assert.match(r.all, /belongs to your own Chrome, not "work"/)
+    assert.equal(work.stats.createTargets, 0, 'and must not have touched the context\'s Chrome')
+  })
 })
 
-test('a stale context id is never used for a cookie call (Chrome would apply it to the person\'s profile)', async () => {
-  const chrome = await startFakeChrome()
-  try {
-    await withHome(async (home) => {
-      chrome.addCookie(chrome.DEFAULT_CTX, { name: 'own', value: 'mine', domain: '.example.com' })
-      assert.equal((await run(chrome.endpoint, ['new', '-s', 'w', '--context', 'work'], home)).code, 0)
-      const [oldId] = chrome.contexts()
-      chrome.restart()
-      const before = chrome.stats.browserCalls.length
-      const r = await run(chrome.endpoint, ['context', 'save', 'work'], home)
-      assert.equal(r.code, 0, r.all)
-      assert.match(r.all, /not open in this Chrome/)
-      const storage = chrome.stats.browserCalls.slice(before).filter((c) => c.method.startsWith('Storage.'))
-      assert.deepEqual(storage, [], `no Storage call at all for a context Chrome no longer has:\n${JSON.stringify(storage)}`)
-      assert.ok(!chrome.contexts().includes(oldId))
-      assert.deepEqual(chrome.cookies(chrome.DEFAULT_CTX).map((c) => c.value), ['mine'])
-    })
-  } finally { await chrome.close() }
+test('an unknown context is an error for a command that cannot create one', async () => {
+  await twoChromes(async ({ ba }) => {
+    const r = await ba('read', '-s', 'x', '--context', 'ghost')
+    assert.notEqual(r.code, 0)
+    assert.match(r.all, /no context named "ghost" — open one with: browser-automation new/)
+  })
 })
 
-test('a session cannot switch context under a live tab', async () => {
-  const chrome = await startFakeChrome()
-  try {
-    await withHome(async (home) => {
-      assert.equal((await run(chrome.endpoint, ['goto', '-s', 'x', 'https://a.test'], home)).code, 0)
-      const r = await run(chrome.endpoint, ['goto', '-s', 'x', '--context', 'other', 'https://a.test'], home)
-      assert.notEqual(r.code, 0, `must refuse:\n${r.all}`)
-      assert.match(r.all, /your own profile, not "other"/)
-      assert.equal(chrome.contexts().length, 0, 'and must not have created the context')
-    })
-  } finally { await chrome.close() }
+test('port and profile answer for the context', async () => {
+  await twoChromes(async ({ work, profileDir, ba }) => {
+    assert.equal((await ba('port', '--context', 'work')).all.trim(), String(work.port))
+    assert.equal((await ba('profile', '--context', 'work')).all.trim(), profileDir)
+    assert.notEqual((await ba('port')).all.trim(), String(work.port), 'without it, the person\'s own port')
+  })
 })
 
-test('context list and forget', async () => {
-  const chrome = await startFakeChrome()
-  try {
-    await withHome(async (home) => {
-      assert.equal((await run(chrome.endpoint, ['new', '-s', 'cf2', '--context', 'cloudflare-2'], home)).code, 0)
-      const l = await run(chrome.endpoint, ['context'], home)
-      assert.match(l.all, /cloudflare-2\s+\[open\].*sessions: cf2/)
-      const f = await run(chrome.endpoint, ['context', 'forget', 'cloudflare-2', '--close'], home)
-      assert.equal(f.code, 0, f.all)
-      assert.ok(!existsSync(contextFile(home, 'cloudflare-2')), 'the saved login is deleted')
-      assert.equal(chrome.contexts().length, 0, '--close closed the context and its window')
-    })
-  } finally { await chrome.close() }
+test('list and gc see only the sessions of the Chrome they drive', async () => {
+  await twoChromes(async ({ home, ba }) => {
+    assert.equal((await ba('new', '-s', 'cf2', '--context', 'work')).code, 0)
+    assert.equal((await ba('new', '-s', 'plain')).code, 0)
+    const own = await ba('list')
+    assert.match(own.all, /plain/)
+    assert.doesNotMatch(own.all, /cf2/, 'the context\'s session is not "stale" in the person\'s list')
+    assert.match((await ba('list', '--context', 'work')).all, /cf2\s+\[live\] \{work\}/)
+    // Against the person's tabs a context's session looks stale — gc must not delete it.
+    assert.equal((await ba('gc')).code, 0)
+    assert.ok(session(home, 'cf2'), 'gc left the context\'s session alone')
+  })
+})
+
+test('a new context gets its own port, outside the per-user range', async () => {
+  await twoChromes(async ({ home, work, ba }) => {
+    await ba('launch', '--context', 'fresh', '--status')
+    const rec = JSON.parse(readFileSync(join(home, '.browser-automation', 'contexts', 'fresh.json'), 'utf8'))
+    assert.ok(rec.port >= 10323 && rec.port < 11123, `port ${rec.port} in the context block`)
+    assert.notEqual(rec.port, work.port)
+    assert.ok(existsSync(rec.profileDir), 'its profile folder exists')
+  })
+})
+
+test('--context after a bare -- is text, not a flag', async () => {
+  await twoChromes(async ({ ba }) => {
+    const r = await ba('fill', '-s', 'plain', 'e1', '--', '--context ghost')
+    assert.doesNotMatch(r.all, /no context named/, r.all)
+  })
+})
+
+test('context forget refuses a running context, then removes it and its sessions', async () => {
+  await twoChromes(async ({ home, work, profileDir, ba }) => {
+    assert.equal((await ba('new', '-s', 'cf2', '--context', 'work')).code, 0)
+    assert.match((await ba('context')).all, /work\s+:\d+\s+\[running\]\s+sessions: cf2/)
+    const busy = await ba('context', 'forget', 'work')
+    assert.notEqual(busy.code, 0)
+    assert.match(busy.all, /is running — stop it first/)
+    await work.close()
+    const r = await ba('context', 'forget', 'work')
+    assert.equal(r.code, 0, r.all)
+    assert.equal(session(home, 'cf2'), null, 'its session is gone too')
+    assert.ok(existsSync(profileDir), 'the profile is kept without --delete-profile')
+  })
+})
+
+test('a context file from the in-memory dev build is replaced, cookies and all', async () => {
+  await twoChromes(async ({ home, ba }) => {
+    const f = join(home, '.browser-automation', 'contexts', 'old.json')
+    writeFileSync(f, JSON.stringify({ name: 'old', browserContextId: 'ABC', cookies: [{ name: 'secret', value: 'login' }] }))
+    const r = await ba('read', '-s', 'x', '--context', 'old')
+    assert.match(r.all, /no context named "old"/, 'not mistaken for a context with a port')
+    await ba('launch', '--context', 'old', '--status')
+    const rec = JSON.parse(readFileSync(f, 'utf8'))
+    assert.ok(Number.isInteger(rec.port), 'replaced by a separate-Chrome record')
+    assert.equal(rec.cookies, undefined, 'and the old cookies are off disk')
+  })
 })
