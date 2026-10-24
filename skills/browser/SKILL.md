@@ -235,6 +235,11 @@ browser-automation read -s cf2                # follows the session's context �
   Chrome without `--context`. A session can't change context; use another `-s`.
 - **It is a real profile** (`~/.browser-automation/contexts/<name>/chrome-profile`):
   logins and extensions persist across restarts, like the main profile.
+- **It starts EMPTY** — no logins, no extensions. `--clone-profile` (only when
+  the context is first made) instead seeds it from a copy of the automation
+  profile, without caches (~0.9 GB): its extensions work, and so do ALL its
+  logins and cookies. ⛔ Ask the user before using it; it is their call whether
+  a context for another account should start signed in as them.
 - **Starting it takes the screen once** — a cold Chrome launch comes to the
   front (issue #25). `goto`/`new` start it when it isn't running; `context stop
   <name>` quits it; `context forget <name> [--delete-profile]` removes it.

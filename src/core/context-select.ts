@@ -12,6 +12,8 @@
 
 import { mkdirSync } from 'node:fs'
 import { allocateContextPort } from './cdp.js'
+import { resolveProfile } from './profile.js'
+import { cloneProfile } from './profile-clone.js'
 import {
   contextProfileDir,
   listContextRecords,
@@ -28,9 +30,10 @@ const CREATES = new Set(['new', 'goto', 'launch'])
 
 export class ContextError extends Error {}
 
-function takeContextFlag(argv: string[]): { argv: string[]; name?: string } {
+function takeContextFlag(argv: string[]): { argv: string[]; name?: string; clone: boolean } {
   const out: string[] = []
   let name: string | undefined
+  let clone = false
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--') { out.push(...argv.slice(i)); break }
@@ -40,9 +43,10 @@ function takeContextFlag(argv: string[]): { argv: string[]; name?: string } {
       name = v; i++; continue
     }
     if (a.startsWith('--context=')) { name = a.slice('--context='.length); continue }
+    if (a === '--clone-profile') { clone = true; continue }
     out.push(a)
   }
-  return { argv: out, name }
+  return { argv: out, name, clone }
 }
 
 /** The `-s`/`--session` value, or the default — only when the tab is chosen by session (no -m/-t/-F). */
@@ -64,7 +68,7 @@ function sessionOf(argv: string[]): string | null {
  * create one, and set BROWSER_AUTOMATION_CONTEXT. Returns argv without the flag.
  */
 export async function selectContext(sub: string | undefined, rawArgv: string[]): Promise<string[]> {
-  const { argv, name: flag } = takeContextFlag(rawArgv)
+  const { argv, name: flag, clone } = takeContextFlag(rawArgv)
   const asked = flag ?? (process.env.BAC_CONTEXT || undefined)
   const session = sub && !SESSIONLESS.has(sub) ? sessionOf(argv) : null
   const st = session ? loadSession(session) : null
@@ -78,7 +82,11 @@ export async function selectContext(sub: string | undefined, rawArgv: string[]):
     )
   }
   const name = asked ?? st?.context
-  if (!name) { delete process.env.BROWSER_AUTOMATION_CONTEXT; return argv }
+  if (!name) {
+    if (clone) throw new ContextError('--clone-profile seeds a NEW login context: use it with --context <name>')
+    delete process.env.BROWSER_AUTOMATION_CONTEXT
+    return argv
+  }
 
   if (!validContextName(name)) {
     throw new ContextError(`invalid context name "${name}": letters, digits, '.', '_' or '-' (max 64), starting with a letter or digit`)
@@ -89,8 +97,26 @@ export async function selectContext(sub: string | undefined, rawArgv: string[]):
     }
     const port = await allocateContextPort(listContextRecords().map((r) => r.port))
     const profileDir = contextProfileDir(name)
-    mkdirSync(profileDir, { recursive: true })
+    if (clone) {
+      // The AUTOMATION profile — resolved before any context is active, so it
+      // can only be the user's own automation Chrome's, never another context's.
+      delete process.env.BROWSER_AUTOMATION_CONTEXT
+      const from = resolveProfile().dir
+      console.error(
+        `Context "${name}": copying the automation profile (${from}) without its caches. `
+        + 'It starts with the same extensions — and the same logins and cookies; sign out of any account that should not be in it.',
+      )
+      try {
+        cloneProfile(from, profileDir)
+      } catch (e) {
+        throw new ContextError(`could not copy the automation profile into context "${name}": ${e instanceof Error ? e.message : String(e)} — nothing was kept; run it again, or omit --clone-profile`)
+      }
+    } else {
+      mkdirSync(profileDir, { recursive: true })
+    }
     saveContextRecord({ name, port, profileDir, createdAt: new Date().toISOString() })
+  } else if (clone) {
+    console.error(`Context "${name}" already exists, so --clone-profile does nothing; its profile is left as it is.`)
   }
   process.env.BROWSER_AUTOMATION_CONTEXT = name
   return argv
