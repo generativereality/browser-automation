@@ -43,6 +43,8 @@ export interface ContextRecord {
   port: number
   /** Its Chrome's --user-data-dir. */
   profileDir: string
+  /** Its window colour (core/profile-clone.ts, CONTEXT_COLORS), so a person can tell the Chromes apart. */
+  color?: string
   createdAt: string
 }
 

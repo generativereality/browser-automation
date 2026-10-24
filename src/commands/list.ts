@@ -1,7 +1,8 @@
 import { define } from 'gunshi'
 import { consola } from 'consola'
 import { listSessions } from '../core/session.js'
-import { listPageTargets, listTargets } from '../core/cdp.js'
+import { cdpPort, listPageTargets, listTargets } from '../core/cdp.js'
+import { activeContextName } from '../core/context-store.js'
 
 export const listCommand = define({
   name: 'list',
@@ -47,7 +48,8 @@ export const listCommand = define({
       consola.log(`  + ${stale.length} stale bookmark(s) whose tab is gone — \`list --all\` to see them, \`gc --sessions\` to clear them`)
     }
     if (sessions.length) consola.log('')
-    consola.log(`# open tabs (${targets.length}) — address with -t <id> or -m <substr>`)
+    const ctxName = activeContextName()
+    consola.log(`# open tabs (${targets.length}) in ${ctxName ? `context "${ctxName}"'s Chrome` : 'your automation Chrome'} (:${cdpPort()}) — address with -t <id> or -m <substr>`)
     for (const t of targets) {
       const owner = sessions.find((s) => s.targetId === t.id)
       const title = (t.title ?? '').replace(/\s+/g, ' ').slice(0, 28)

@@ -13,12 +13,13 @@ import { startFakeChrome } from './fake-chrome.mjs'
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.js')
 
-function run(endpoint, argv, home) {
+function run(endpoint, argv, home, extraEnv = {}) {
   return new Promise((resolve) => {
     const { BAC_CONTEXT: _c, BAC_SESSION: _s, BROWSER_AUTOMATION_CONTEXT: _a, ...base } = process.env
     const child = spawn(process.execPath, [CLI, ...argv], {
       env: {
         ...base,
+        ...extraEnv,
         HOME: home,
         NO_COLOR: '1',
         NO_UPDATE_NOTIFIER: '1',
@@ -46,7 +47,11 @@ async function twoChromes(fn) {
   writeFileSync(join(home, '.browser-automation', 'contexts', 'work.json'),
     JSON.stringify({ name: 'work', port: work.port, profileDir, createdAt: new Date().toISOString() }))
   try {
-    await fn({ own, work, home, profileDir, ba: (...argv) => run(own.endpoint, argv, home) })
+    await fn({
+      own, work, home, profileDir,
+      ba: (...argv) => run(own.endpoint, argv, home),
+      baWith: (env, ...argv) => run(own.endpoint, argv, home, env),
+    })
   } finally {
     await own.close(); await work.close()
     rmSync(home, { recursive: true, force: true })
@@ -180,7 +185,13 @@ function fakeAutomationProfile(home) {
   for (const d of ['Default/Extensions/abc/1.0', 'Default/Service Worker/Database', 'Default/Cache/Cache_Data', 'Default/Code Cache/js', 'GrShaderCache', 'ba-probe']) {
     mkdirSync(join(p, d), { recursive: true })
   }
-  writeFileSync(join(p, 'Local State'), '{}')
+  writeFileSync(join(p, 'Local State'), JSON.stringify({ profile: { info_cache: { Default: { name: 'Your Chrome', gaia_id: '123', user_name: 'me@personal.example' } } } }))
+  writeFileSync(join(p, 'Default', 'Preferences'), JSON.stringify({ account_info: [{ email: 'me@personal.example' }], google: { services: { signin: {} } }, profile: { name: 'Your Chrome', exit_type: 'Crashed' } }))
+  for (const f of ['Login Data', 'Web Data', 'History']) writeFileSync(join(p, 'Default', f), 'site data')
+  mkdirSync(join(p, 'Default', 'Local Storage', 'leveldb'), { recursive: true })
+  mkdirSync(join(p, 'Default', 'Service Worker', 'CacheStorage'), { recursive: true })
+  mkdirSync(join(p, 'Default', 'Local Extension Settings', 'abc'), { recursive: true })
+  writeFileSync(join(p, 'Default', 'Local Extension Settings', 'abc', 'CURRENT'), 'ext data')
   writeFileSync(join(p, 'Default', 'Cookies'), 'cookies')
   writeFileSync(join(p, 'Default', 'Secure Preferences'), '{}')
   writeFileSync(join(p, 'Default', 'Extensions', 'abc', '1.0', 'manifest.json'), '{}')
@@ -191,35 +202,76 @@ function fakeAutomationProfile(home) {
   return p
 }
 
-test('a new context starts as a copy of the automation profile, without caches or lock files', async () => {
+const read = (f) => JSON.parse(readFileSync(f, 'utf8'))
+const ctxDir = (home, name) => join(home, '.browser-automation', 'contexts', name, 'chrome-profile')
+
+test('a new context gets the automation profile\'s EXTENSIONS, not its logins, and is not signed in to Chrome', async () => {
   await twoChromes(async ({ home, ba }) => {
     fakeAutomationProfile(home)
-    const r = await ba('launch', '--context', 'seeded', '--status')
-    assert.match(r.all, /starting from a copy of the automation profile .* same logins/, r.all)
-    const c = join(home, '.browser-automation', 'contexts', 'seeded', 'chrome-profile')
-    for (const kept of ['Local State', 'Default/Cookies', 'Default/Secure Preferences', 'Default/Extensions/abc/1.0/manifest.json', 'Default/Service Worker/Database/CURRENT']) {
+    const r = await ba('launch', '--context', 'proj', '--status')
+    assert.match(r.all, /copying the EXTENSIONS .* no site logins/, r.all)
+    const c = ctxDir(home, 'proj')
+    for (const kept of ['Default/Extensions/abc/1.0/manifest.json', 'Default/Local Extension Settings/abc/CURRENT', 'Default/Service Worker/Database/CURRENT', 'Default/Secure Preferences']) {
       assert.ok(existsSync(join(c, kept)), `kept ${kept}`)
     }
-    for (const left of ['Default/Cache', 'Default/Code Cache', 'GrShaderCache', 'SingletonLock', 'Cookies', 'ba-probe']) {
+    for (const left of ['Default/Cookies', 'Default/Login Data', 'Default/Web Data', 'Default/History', 'Default/Local Storage', 'Default/Service Worker/CacheStorage',
+      'Default/Cache', 'Default/Code Cache', 'GrShaderCache', 'SingletonLock', 'Cookies', 'ba-probe']) {
       assert.ok(!existsSync(join(c, left)), `left out ${left}`)
     }
+    const prefs = read(join(c, 'Default', 'Preferences'))
+    assert.equal(prefs.account_info, undefined, "Chrome's own Google sign-in is not copied")
+    assert.equal(prefs.google, undefined)
+    const cache = read(join(c, 'Local State')).profile.info_cache.Default
+    assert.equal(cache.gaia_id, undefined)
+    assert.equal(cache.user_name, undefined)
   })
 })
 
-test('--empty-profile starts a new context with nothing', async () => {
+test('every new context is named after itself and gets its own window colour', async () => {
+  await twoChromes(async ({ home, ba }) => {
+    fakeAutomationProfile(home)
+    await ba('launch', '--context', 'one', '--status')
+    await ba('launch', '--context', 'two', '--empty-profile', '--status')
+    const recs = ['one', 'two'].map((n) => read(join(home, '.browser-automation', 'contexts', `${n}.json`)))
+    assert.ok(recs[0].color && recs[1].color && recs[0].color !== recs[1].color, `distinct colours: ${recs.map((r) => r.color)}`)
+    for (const n of ['one', 'two']) {
+      const prefs = read(join(ctxDir(home, n), 'Default', 'Preferences'))
+      assert.equal(prefs.profile.name, n)
+      assert.ok(Number.isInteger(prefs.browser.theme.user_color2), 'the colour key Chrome 155 reads')
+      assert.equal(prefs.browser.theme.color_variant2, 3)
+      assert.equal(prefs.extensions.theme.id, 'user_color_theme_id')
+      assert.equal(read(join(ctxDir(home, n), 'Local State')).profile.info_cache.Default.name, n)
+    }
+    assert.equal(read(join(ctxDir(home, 'one'), 'Default', 'Preferences')).profile.exit_type, 'Normal', 'no "Restore pages?" on first start')
+  })
+})
+
+test('--full-copy takes the logins and Chrome sign-in too', async () => {
+  await twoChromes(async ({ home, ba }) => {
+    fakeAutomationProfile(home)
+    const r = await ba('launch', '--context', 'all', '--full-copy', '--status')
+    assert.match(r.all, /FULL copy .* every login and cookie/, r.all)
+    const c = ctxDir(home, 'all')
+    for (const kept of ['Default/Cookies', 'Default/Login Data', 'Default/Extensions/abc/1.0/manifest.json']) assert.ok(existsSync(join(c, kept)), `kept ${kept}`)
+    assert.ok(!existsSync(join(c, 'Default/Cache')), 'caches still left out')
+    assert.deepEqual(read(join(c, 'Default', 'Preferences')).account_info, [{ email: 'me@personal.example' }])
+  })
+})
+
+test('--empty-profile starts a new context with no extensions and no logins', async () => {
   await twoChromes(async ({ home, ba }) => {
     fakeAutomationProfile(home)
     await ba('launch', '--context', 'blank', '--empty-profile', '--status')
-    const blank = join(home, '.browser-automation', 'contexts', 'blank', 'chrome-profile')
-    assert.deepEqual(readdirSync(blank), [], 'no logins, no extensions')
+    const c = ctxDir(home, 'blank')
+    for (const left of ['Default/Extensions', 'Default/Cookies', 'Default/Local Extension Settings']) assert.ok(!existsSync(join(c, left)), `no ${left}`)
   })
 })
 
 test('with no automation profile yet, a new context starts empty', async () => {
   await twoChromes(async ({ home, ba }) => {
     const r = await ba('launch', '--context', 'first', '--status')
-    assert.doesNotMatch(r.all, /copy of the automation profile/)
-    assert.deepEqual(readdirSync(join(home, '.browser-automation', 'contexts', 'first', 'chrome-profile')), [])
+    assert.equal(r.code === null, false)
+    assert.ok(!existsSync(join(ctxDir(home, 'first'), 'Default', 'Extensions')))
   })
 })
 
@@ -232,10 +284,36 @@ test('an existing context is never re-seeded', async () => {
   })
 })
 
-test('--empty-profile without --context is refused', async () => {
+test('--empty-profile or --full-copy without --context is refused', async () => {
   await twoChromes(async ({ ba }) => {
-    const r = await ba('new', '-s', 'x', '--empty-profile')
-    assert.notEqual(r.code, 0)
-    assert.match(r.all, /use it with --context <name>/)
+    for (const f of ['--empty-profile', '--full-copy']) {
+      const r = await ba('new', '-s', 'x', f)
+      assert.notEqual(r.code, 0)
+      assert.match(r.all, /use it with --context <name>/)
+    }
+  })
+})
+
+test('BAC_CONTEXT is a project default: new sessions use it, existing ones keep their own Chrome', async () => {
+  await twoChromes(async ({ own, work, home, baWith }) => {
+    // A session opened in the person's own Chrome before the project default was set.
+    assert.equal((await baWith({}, 'new', '-s', 'old')).code, 0)
+    const env = { BAC_CONTEXT: 'work' }
+    const r = await baWith(env, 'goto', '-s', 'old', 'https://a.example.test')
+    assert.equal(r.code, 0, `an inherited default must not error on an existing session:\n${r.all}`)
+    assert.ok(own.stats.pageMethods.includes('Page.navigate'), 'and it stays in the Chrome it was opened in')
+    assert.equal((await baWith(env, 'new', '-s', 'fresh')).code, 0)
+    assert.equal(work.stats.createTargets, 1, 'a new session goes to the project context')
+    assert.equal(session(home, 'fresh').context, 'work')
+    assert.match((await baWith(env, 'list')).all, /in context "work"'s Chrome/, 'session-less commands follow it too')
+  })
+})
+
+test('context lists the person\'s own Chrome too, and marks the project default', async () => {
+  await twoChromes(async ({ baWith }) => {
+    await baWith({}, 'new', '-s', 'mine')
+    const r = await baWith({ BAC_CONTEXT: 'work' }, 'context')
+    assert.match(r.all, /\(your automation Chrome\)\s+:\d+\s+\[running\].*sessions: mine/)
+    assert.match(r.all, /work\s+:\d+\s+\[running\].*← BAC_CONTEXT/)
   })
 })
