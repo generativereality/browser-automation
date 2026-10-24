@@ -224,7 +224,7 @@ fi
 # information. The verdict now appears only when it is true.
 if is_up; then
   echo "Already running on :${PORT} — the port is held."
-  echo "Drive it with: browser-automation goto -s <session>${BA_CONTEXT_FLAG:+ --context $BA_CONTEXT_FLAG} <url>"
+  echo "Drive it with: browser-automation goto -s <session>${BA_CONTEXT_FLAG:+ --context $BA_CONTEXT_FLAG} <url>${BA_CONTEXT_FLAG:+  (a session opened in it follows it; later commands need no --context)}"
   echo "(Port held is not health. Check it works: browser-automation doctor)"
   exit 0
 fi
@@ -325,7 +325,7 @@ START="$(date +%s)"
 for _ in $(seq 1 240); do
   if is_up; then
     echo "Chrome launched on :${PORT} in $(( $(date +%s) - START ))s (profile: ${PROFILE}, log: ${LOG})"
-    echo "Drive it with: browser-automation goto -s <session>${BA_CONTEXT_FLAG:+ --context $BA_CONTEXT_FLAG} <url>"
+    echo "Drive it with: browser-automation goto -s <session>${BA_CONTEXT_FLAG:+ --context $BA_CONTEXT_FLAG} <url>${BA_CONTEXT_FLAG:+  (a session opened in it follows it; later commands need no --context)}"
     exit 0
   fi
   sleep 0.25

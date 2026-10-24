@@ -22,7 +22,7 @@ export async function ensureContextChrome(): Promise<void> {
   if (!ctx || (await reachable())) return
   consola.info(
     `Starting the Chrome for context "${ctx.name}": its own window and profile, on :${ctx.port}. `
-    + 'Sign in there once, and install any extension you need in it (a password manager, for passkeys); both are kept.',
+    + 'Whatever you sign in to or install there is kept.',
   )
   const r = spawnSync(process.execPath, [process.argv[1], 'launch', '--context', ctx.name], { stdio: 'inherit' })
   if (r.status !== 0 || !(await reachable())) {

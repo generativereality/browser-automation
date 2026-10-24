@@ -164,12 +164,12 @@ async function launchWindows(statusOnly: boolean, restart: boolean): Promise<boo
   switch (r.outcome) {
     case 'already-running':
       consola.log(`Already running on :${port} — the port is held.`)
-      consola.log(`Drive it with: browser-automation goto -s <session>${activeContextName() ? ` --context ${activeContextName()}` : ''} <url>`)
+      consola.log(`Drive it with: browser-automation goto -s <session>${activeContextName() ? ` --context ${activeContextName()} <url>  (a session opened in it follows it; later commands need no --context)` : ' <url>'}`)
       consola.log('(Port held is not health. Check it works: browser-automation doctor)')
       return true
     case 'launched':
       consola.log(`Chrome launched on :${port} in ${r.seconds}s (profile: ${m.dir}, log: ${chromeLogPath()})`)
-      consola.log(`Drive it with: browser-automation goto -s <session>${activeContextName() ? ` --context ${activeContextName()}` : ''} <url>`)
+      consola.log(`Drive it with: browser-automation goto -s <session>${activeContextName() ? ` --context ${activeContextName()} <url>  (a session opened in it follows it; later commands need no --context)` : ' <url>'}`)
       return true
     case 'not-ours':
       consola.error(
