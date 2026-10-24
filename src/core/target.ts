@@ -24,7 +24,8 @@ export async function resolveLiveTarget(
     throw new Error(`session "${name}" has no live tab — run:  browser-automation goto -s ${name} <url>`)
   }
   const targetId = await createTab('about:blank')
-  saveSession({ name, targetId, createdAt: new Date().toISOString(), url: st?.url })
+  // Keep the session's context: the entry point chose this Chrome from it.
+  saveSession({ name, targetId, createdAt: new Date().toISOString(), url: st?.url, ...(st?.context ? { context: st.context } : {}) })
   return { targetId, created: true }
 }
 

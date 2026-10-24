@@ -9,6 +9,9 @@
 // its own targetId; we never call Target.activateTarget / Page.bringToFront,
 // so we never steal focus from the user or from sibling sessions.
 
+import { createServer } from 'node:net'
+import { activeContext } from './context-store.js'
+
 // The debugging port is PER-USER, and that is not a nicety.
 //
 // `127.0.0.1` is machine-wide, not per-account, and Chrome's DevTools protocol
@@ -42,6 +45,11 @@ const FIRST_HUMAN_UID = process.platform === 'darwin' ? 501 : 1000
  * for exactly that.
  */
 export function cdpPort(): number {
+  // A login context is its own Chrome on its own port (core/context-store.ts).
+  // It wins over everything below: the entry point set it because THIS
+  // command is for that Chrome.
+  const ctx = activeContext()
+  if (ctx) return ctx.port
   const explicit = Number(process.env.BROWSER_AUTOMATION_PORT)
   if (Number.isInteger(explicit) && explicit > 0 && explicit < 65536) return explicit
   const uid = typeof process.getuid === 'function' ? process.getuid() : FIRST_HUMAN_UID
@@ -55,7 +63,34 @@ export function cdpPort(): number {
 }
 
 export function cdpHost(): string {
+  // A context's Chrome is always local, on the port it was given, whatever
+  // BROWSER_AUTOMATION_CDP says about the user's own Chrome.
+  if (activeContext()) return `http://localhost:${cdpPort()}`
   return process.env.BROWSER_AUTOMATION_CDP || `http://localhost:${cdpPort()}`
+}
+
+/**
+ * Ports for login contexts, decided here like every other port. A block well
+ * above the per-user range (BASE_PORT … BASE_PORT+999), so a context can never
+ * land on another account's Chrome. The first free one not already given to a
+ * context is taken, once, and kept in the context's record.
+ */
+const CONTEXT_PORTS = { first: BASE_PORT + 1100, count: 800 }
+
+function portIsFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = createServer()
+    srv.once('error', () => resolve(false))
+    srv.listen(port, '127.0.0.1', () => srv.close(() => resolve(true)))
+  })
+}
+
+export async function allocateContextPort(taken: number[]): Promise<number> {
+  for (let p = CONTEXT_PORTS.first; p < CONTEXT_PORTS.first + CONTEXT_PORTS.count; p++) {
+    if (taken.includes(p)) continue
+    if (await portIsFree(p)) return p
+  }
+  throw new Error(`no free port for a new context in ${CONTEXT_PORTS.first}-${CONTEXT_PORTS.first + CONTEXT_PORTS.count - 1}`)
 }
 
 /** A target has gone away (tab closed, or Chrome restarted -> new targetIds). */

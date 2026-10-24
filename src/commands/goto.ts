@@ -8,6 +8,8 @@ import { navigate } from '../core/cdp.js'
 import { ensureRenderer } from '../core/renderer-wake.js'
 import { withRendererDiagnosis } from '../core/renderer-health.js'
 import { wantsShow, showTab, describeNotShown } from '../core/show.js'
+import { ensureContextChrome } from '../core/context-launch.js'
+import { activeContextName } from '../core/context-store.js'
 
 export const gotoCommand = define({
   name: 'goto',
@@ -25,6 +27,9 @@ export const gotoCommand = define({
     if (!url) { consola.error('URL is required'); process.exit(1) }
     const target = normalizeUrl(url)
     const opts = targetOpts(ctx.values)
+    // A login context's Chrome is started the first time it is needed.
+    await ensureContextChrome()
+    const context = activeContextName()
 
     // Both halves are wrapped: creating the session's tab is itself a renderer
     // launch, and it fails the same silent way a cross-origin navigation does.
@@ -65,7 +70,7 @@ export const gotoCommand = define({
     if (!opts.match && !opts.target) {
       const name = opts.session || defaultSessionName()
       const prev = loadSession(name)
-      saveSession({ name, targetId, url: target, createdAt: prev?.createdAt ?? new Date().toISOString() })
+      saveSession({ name, targetId, url: target, createdAt: prev?.createdAt ?? new Date().toISOString(), ...(context ? { context } : {}) })
       consola.success(`[${name}] ${created ? 'opened tab + ' : ''}navigated → ${target}`)
     } else {
       consola.success(`[${targetId.slice(0, 12)}…] navigated → ${target}`)

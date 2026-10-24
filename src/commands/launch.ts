@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { launchScriptPath } from '../core/paths.js'
 import { cdpPort, closeBrowser, listPageTargets } from '../core/cdp.js'
+import { activeContextName } from '../core/context-store.js'
 import { probeRenderer, explainRendererFailure, chromeLogPath } from '../core/renderer-health.js'
 import { migrateProfile, resolveProfile } from '../core/profile.js'
 import { chromeExecutable } from '../core/chrome-path.js'
@@ -37,7 +38,9 @@ export const launchCommand = define({
     // is never implied — not by a failed launch, not by an unhealthy doctor.
     // Something has to type it.
     const port = ['--port', String(cdpPort())]
-    const bash = (extra: string[]) => spawnSync('bash', [script, ...port, ...extra], { stdio: 'inherit' })
+    // The script names the context in its hint; it decides nothing from it.
+    const env = { ...process.env, BA_CONTEXT_FLAG: activeContextName() ?? '' }
+    const bash = (extra: string[]) => spawnSync('bash', [script, ...port, ...extra], { stdio: 'inherit', env })
 
     // `--status` asks only about the port; it neither moves nor opens anything.
     if (ctx.values.status) process.exit(bash(['--status']).status ?? 1)
@@ -161,12 +164,12 @@ async function launchWindows(statusOnly: boolean, restart: boolean): Promise<boo
   switch (r.outcome) {
     case 'already-running':
       consola.log(`Already running on :${port} — the port is held.`)
-      consola.log('Drive it with: browser-automation goto -s <session> <url>')
+      consola.log(`Drive it with: browser-automation goto -s <session>${activeContextName() ? ` --context ${activeContextName()} <url>  (a session opened in it follows it; later commands need no --context)` : ' <url>'}`)
       consola.log('(Port held is not health. Check it works: browser-automation doctor)')
       return true
     case 'launched':
       consola.log(`Chrome launched on :${port} in ${r.seconds}s (profile: ${m.dir}, log: ${chromeLogPath()})`)
-      consola.log('Drive it with: browser-automation goto -s <session> <url>')
+      consola.log(`Drive it with: browser-automation goto -s <session>${activeContextName() ? ` --context ${activeContextName()} <url>  (a session opened in it follows it; later commands need no --context)` : ' <url>'}`)
       return true
     case 'not-ours':
       consola.error(

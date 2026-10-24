@@ -101,7 +101,8 @@ browser-automation bind -s bank -m nordnet    # …or adopt it into a session
 | `doctor` | Diagnose Node, Chrome, targets, sessions — and **renderer capacity** (a browser that can no longer launch renderers passes every other check) |
 | `gc` | Prune stale session bookmarks and dead tabs (`--dry` to preview, `--orphans` to also close unclaimed live tabs) |
 | `list` | List sessions and every open tab (id, title, url) |
-| `new -s <s> [url]` | Open a background tab for a session |
+| `new -s <s> [--context <name>] [url]` | Open a background tab for a session; `--context` opens it in a named login context — a separate Chrome with its own profile and window, for a second account next to your own (started on demand) |
+| `context [stop <name> \| forget <name> [--delete-profile]]` | List login contexts and whether their Chrome is running; quit one; remove one (its profile only with `--delete-profile`) |
 | `goto (-s\|-m\|-t) <url>` | Navigate (session tab created if needed) |
 | `bind -s <name> (-m\|-t)` | Adopt an already-open tab into a session |
 | `snapshot (-s\|-m\|-t)` | List interactive elements with refs (`e1`, `e2`, …) |
@@ -173,6 +174,13 @@ same one-action-per-snapshot rule as Playwright refs.
 - `launch` works on macOS, Linux and Windows (on Windows it needs only Node; set
   `BROWSER_AUTOMATION_CHROME` if `chrome.exe` is somewhere unusual). Anywhere else, start Chrome with
   `--remote-debugging-port=<your port> --user-data-dir="<profile>"` — `browser-automation doctor` prints the port.
+
+Any command takes `--context <name>` (or `BAC_CONTEXT=<name>`) to act on a login
+context's Chrome instead of your own; a session opened in a context follows it
+without the flag. A new context starts as a copy of the automation
+profile (its extensions, and its logins and cookies; caches are left out), so
+sign out there of any account it is not for; `--empty-profile` when creating it
+starts it with nothing. Your ordinary Chrome profile is never copied.
 
 ## Environment
 

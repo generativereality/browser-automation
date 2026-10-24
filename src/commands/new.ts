@@ -6,6 +6,8 @@ import { createTab } from '../core/cdp.js'
 import { ensureRenderer } from '../core/renderer-wake.js'
 import { probeRenderer, explainRendererFailure, withRendererDiagnosis } from '../core/renderer-health.js'
 import { wantsShow, showTab, describeNotShown } from '../core/show.js'
+import { ensureContextChrome } from '../core/context-launch.js'
+import { activeContextName } from '../core/context-store.js'
 
 export const newCommand = define({
   name: 'new',
@@ -23,6 +25,9 @@ export const newCommand = define({
     // url is an optional positional (args-tokens requires declared positionals).
     const url = ctx.positionals[1] ? normalizeUrl(ctx.positionals[1]) : 'about:blank'
 
+    // A login context's Chrome is started the first time it is needed.
+    await ensureContextChrome()
+    const context = activeContextName()
     const existing = loadSession(name)
     if (existing && !ctx.values.force) {
       consola.warn(`Session "${name}" already maps to a tab. Use --force to open another, or just \`browser-automation goto -s ${name} <url>\`.`)
@@ -31,7 +36,7 @@ export const newCommand = define({
     // rather than fail — so this half needs the diagnosis too, or the operator
     // gets a bare 30s timeout for the one failure that really is permanent.
     const targetId = await withRendererDiagnosis(() => createTab(url))
-    saveSession({ name, targetId, url, createdAt: new Date().toISOString() })
+    saveSession({ name, targetId, url, createdAt: new Date().toISOString(), ...(context ? { context } : {}) })
 
     // `Target.createTarget` is a browser-level call and succeeds even when the
     // renderer behind the new tab is not ready — it returns a target id for a
@@ -65,6 +70,6 @@ export const newCommand = define({
       const note = describeNotShown(outcome)
       if (note) consola.info(note)
     }
-    consola.success(`[${name}] opened ${shown ? 'and showed' : 'background'} tab ${targetId.slice(0, 12)}… → ${url}`)
+    consola.success(`[${name}] opened ${shown ? 'and showed' : 'background'} tab ${targetId.slice(0, 12)}…${context ? ` in context "${context}"` : ''} → ${url}`)
   },
 })

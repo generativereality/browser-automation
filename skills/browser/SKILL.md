@@ -156,6 +156,8 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Where the Chrome profile lives / move it out of Chrome's folder | `browser-automation profile` / `profile --migrate` |
 | List sessions + every open tab (id, title, url) | `browser-automation list` |
 | Open a background tab | `browser-automation new -s work [url]` |
+| A SECOND login next to the user's (another account) | `browser-automation new -s cf2 --context cloudflare-2 https://dash.cloudflare.com` |
+| List / stop / remove login contexts | `browser-automation context` / `context stop <name>` / `context forget <name>` |
 | Navigate (session tab created if needed) | `browser-automation goto -s work https://example.com` |
 | Drive a tab the user already opened | `browser-automation snapshot -m nordnet` |
 | Adopt an open tab into a session | `browser-automation bind -s bank -m nordnet` |
@@ -214,6 +216,42 @@ browser-automation read -s cf                 # later runs: already authenticate
 ```
 
 There's no `state-save`/`state-load` to manage — the profile *is* the auth store.
+
+### A second account next to the first — `--context <name>`
+
+The profile holds ONE login per site. For a second account beside it (two
+Cloudflare dashboards, a client's Google account next to the user's), open the
+session in a named **login context**: a separate Chrome with its own profile,
+port and window, started on demand. The user's own Chrome is not touched.
+
+```bash
+browser-automation new -s cf2 --context cloudflare-2 https://dash.cloudflare.com
+# FIRST time only: in the new window (a copy of the automation profile), the user
+# signs out of the first account and signs in to the other one
+browser-automation read -s cf2                # follows the session's context — no flag
+```
+
+- **A session remembers its context**: later commands on `-s cf2` go to that
+  Chrome without `--context`. A session can't change context; use another `-s`.
+- **It is a real profile** (`~/.browser-automation/contexts/<name>/chrome-profile`):
+  logins and extensions persist across restarts, like the main profile.
+- **It starts as a copy of the automation profile** (caches left out, ~0.9 GB,
+  a few seconds): the same extensions work at once — a password manager, for
+  passkeys — and it is signed in to the same accounts. So in the new window,
+  **sign out of the account this context is NOT for** (e.g. the first Cloudflare
+  account), then sign in to the other. `--empty-profile` (only when the context
+  is first made) starts it with nothing instead. The user's ordinary Chrome
+  profile is never copied.
+- **Starting it takes the screen once** — a cold Chrome launch comes to the
+  front (issue #25). `goto`/`new` start it when it isn't running; `context stop
+  <name>` quits it; `context forget <name> [--delete-profile]` removes it.
+- `-m`/`-t`, `list`, `doctor`, `launch` act on the user's Chrome unless given
+  `--context <name>` (or `BAC_CONTEXT`).
+- ⛔ **Not a second Chrome profile in the main Chrome, not an incognito-style
+  CDP context.** A second profile becomes Chrome's default while its window is
+  open — every other session's new tab opens in it, logged out. A CDP
+  `createBrowserContext` hides its tabs from extensions (Bitwarden: `No tab with
+  id`), so passkeys and autofill fail. Measured in issue #31.
 
 ## Gotchas
 
