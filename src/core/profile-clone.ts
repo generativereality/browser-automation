@@ -1,8 +1,9 @@
-// `--clone-profile`: seed a NEW login context's Chrome profile from a copy of
-// the automation profile, so it starts with the same extensions (and, by the
-// same token, the same logins). Opt-in only: a context that silently started
-// signed in to everything the automation profile is signed in to would be the
-// opposite of a separate account.
+// A NEW login context's Chrome profile starts as a copy of the AUTOMATION
+// profile (core/context-select.ts), so it has the same extensions — and, by
+// the same token, the same logins; `--empty-profile` starts it with nothing.
+// The source is only ever the automation profile. The user's ordinary Chrome
+// profile is never copied: an automation browser signed in to everything an
+// everyday browser is would be dangerous and confusing.
 //
 // Measured 2026-10-24 on Chrome 155 / macOS 27, against the live automation
 // profile (6.5 GB on disk):
@@ -47,7 +48,7 @@ const vanished = (e: unknown) => (e as NodeJS.ErrnoException)?.code === 'ENOENT'
 /**
  * The automation Chrome is usually RUNNING while this copies, and it deletes
  * files under us — database journals, temp files. Node's cpSync aborts on the
- * first one: the first live `--clone-profile` died 878 MB in, leaving a
+ * first one: the first live copy (then the opt-in `--clone-profile`) died 878 MB in, leaving a
  * half-copied profile and no context (2026-10-24). A file that vanished
  * between listing and copying is one Chrome no longer needed, so skip it.
  */
@@ -73,7 +74,7 @@ function copyTree(src: string, dst: string, root: string): void {
 /** Copy `from` (a user-data-dir) into the empty `to`. Throws if `to` already holds a profile. */
 export function cloneProfile(from: string, to: string): void {
   if (!existsSync(join(from, 'Default'))) throw new Error(`no profile to copy at ${from} (no Default/ in it)`)
-  if (existsSync(to) && readdirSync(to).length) throw new Error(`${to} is not empty; --clone-profile only seeds a new context`)
+  if (existsSync(to) && readdirSync(to).length) throw new Error(`${to} is not empty; only a new context is seeded from the automation profile`)
   try {
     copyTree(from, to, from)
   } catch (e) {

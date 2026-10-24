@@ -10,7 +10,8 @@
 // `--context` is taken out of argv here, so every command accepts it without
 // declaring it.
 
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { allocateContextPort } from './cdp.js'
 import { resolveProfile } from './profile.js'
 import { cloneProfile } from './profile-clone.js'
@@ -30,10 +31,10 @@ const CREATES = new Set(['new', 'goto', 'launch'])
 
 export class ContextError extends Error {}
 
-function takeContextFlag(argv: string[]): { argv: string[]; name?: string; clone: boolean } {
+function takeContextFlag(argv: string[]): { argv: string[]; name?: string; empty: boolean } {
   const out: string[] = []
   let name: string | undefined
-  let clone = false
+  let empty = false
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--') { out.push(...argv.slice(i)); break }
@@ -43,10 +44,10 @@ function takeContextFlag(argv: string[]): { argv: string[]; name?: string; clone
       name = v; i++; continue
     }
     if (a.startsWith('--context=')) { name = a.slice('--context='.length); continue }
-    if (a === '--clone-profile') { clone = true; continue }
+    if (a === '--empty-profile') { empty = true; continue }
     out.push(a)
   }
-  return { argv: out, name, clone }
+  return { argv: out, name, empty }
 }
 
 /** The `-s`/`--session` value, or the default — only when the tab is chosen by session (no -m/-t/-F). */
@@ -68,7 +69,7 @@ function sessionOf(argv: string[]): string | null {
  * create one, and set BROWSER_AUTOMATION_CONTEXT. Returns argv without the flag.
  */
 export async function selectContext(sub: string | undefined, rawArgv: string[]): Promise<string[]> {
-  const { argv, name: flag, clone } = takeContextFlag(rawArgv)
+  const { argv, name: flag, empty } = takeContextFlag(rawArgv)
   const asked = flag ?? (process.env.BAC_CONTEXT || undefined)
   const session = sub && !SESSIONLESS.has(sub) ? sessionOf(argv) : null
   const st = session ? loadSession(session) : null
@@ -83,7 +84,7 @@ export async function selectContext(sub: string | undefined, rawArgv: string[]):
   }
   const name = asked ?? st?.context
   if (!name) {
-    if (clone) throw new ContextError('--clone-profile seeds a NEW login context: use it with --context <name>')
+    if (empty) throw new ContextError('--empty-profile is for a NEW login context: use it with --context <name>')
     delete process.env.BROWSER_AUTOMATION_CONTEXT
     return argv
   }
@@ -97,26 +98,33 @@ export async function selectContext(sub: string | undefined, rawArgv: string[]):
     }
     const port = await allocateContextPort(listContextRecords().map((r) => r.port))
     const profileDir = contextProfileDir(name)
-    if (clone) {
-      // The AUTOMATION profile — resolved before any context is active, so it
-      // can only be the user's own automation Chrome's, never another context's.
-      delete process.env.BROWSER_AUTOMATION_CONTEXT
-      const from = resolveProfile().dir
+    // **By default a new context starts as a copy of the AUTOMATION profile**
+    // (core/profile-clone.ts): its extensions — a password manager, for
+    // passkeys — work at once, without reinstalling each one per context.
+    // Resolved with no context active, so it is the user's own automation
+    // Chrome's profile, never another context's — and NEVER the user's ordinary
+    // Chrome profile, which this CLI does not copy at all: an automation Chrome
+    // signed in to everything somebody's everyday browser is would be
+    // dangerous and confusing (Fred, 2026-10-24).
+    delete process.env.BROWSER_AUTOMATION_CONTEXT
+    const from = resolveProfile().dir
+    if (!empty && existsSync(join(from, 'Default'))) {
       console.error(
-        `Context "${name}": copying the automation profile (${from}) without its caches. `
-        + 'It starts with the same extensions — and the same logins and cookies; sign out of any account that should not be in it.',
+        `Context "${name}": starting from a copy of the automation profile (${from}, caches left out). `
+        + 'It has the same extensions — and the same logins: sign out there of any account this context is not for. '
+        + '(--empty-profile starts a context with nothing.)',
       )
       try {
         cloneProfile(from, profileDir)
       } catch (e) {
-        throw new ContextError(`could not copy the automation profile into context "${name}": ${e instanceof Error ? e.message : String(e)} — nothing was kept; run it again, or omit --clone-profile`)
+        throw new ContextError(`could not copy the automation profile into context "${name}": ${e instanceof Error ? e.message : String(e)} — nothing was kept; run it again, or pass --empty-profile`)
       }
     } else {
       mkdirSync(profileDir, { recursive: true })
     }
     saveContextRecord({ name, port, profileDir, createdAt: new Date().toISOString() })
-  } else if (clone) {
-    console.error(`Context "${name}" already exists, so --clone-profile does nothing; its profile is left as it is.`)
+  } else if (empty) {
+    console.error(`Context "${name}" already exists, so --empty-profile does nothing; its profile is left as it is.`)
   }
   process.env.BROWSER_AUTOMATION_CONTEXT = name
   return argv

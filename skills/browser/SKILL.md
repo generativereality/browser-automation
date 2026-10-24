@@ -226,8 +226,8 @@ port and window, started on demand. The user's own Chrome is not touched.
 
 ```bash
 browser-automation new -s cf2 --context cloudflare-2 https://dash.cloudflare.com
-# FIRST time only: the user signs in to the other account in the new window, and
-# installs any extension they need there (a password manager, for passkeys)
+# FIRST time only: in the new window (a copy of the automation profile), the user
+# signs out of the first account and signs in to the other one
 browser-automation read -s cf2                # follows the session's context — no flag
 ```
 
@@ -235,11 +235,13 @@ browser-automation read -s cf2                # follows the session's context �
   Chrome without `--context`. A session can't change context; use another `-s`.
 - **It is a real profile** (`~/.browser-automation/contexts/<name>/chrome-profile`):
   logins and extensions persist across restarts, like the main profile.
-- **It starts EMPTY** — no logins, no extensions. `--clone-profile` (only when
-  the context is first made) instead seeds it from a copy of the automation
-  profile, without caches (~0.9 GB): its extensions work, and so do ALL its
-  logins and cookies. ⛔ Ask the user before using it; it is their call whether
-  a context for another account should start signed in as them.
+- **It starts as a copy of the automation profile** (caches left out, ~0.9 GB,
+  a few seconds): the same extensions work at once — a password manager, for
+  passkeys — and it is signed in to the same accounts. So in the new window,
+  **sign out of the account this context is NOT for** (e.g. the first Cloudflare
+  account), then sign in to the other. `--empty-profile` (only when the context
+  is first made) starts it with nothing instead. The user's ordinary Chrome
+  profile is never copied.
 - **Starting it takes the screen once** — a cold Chrome launch comes to the
   front (issue #25). `goto`/`new` start it when it isn't running; `context stop
   <name>` quits it; `context forget <name> [--delete-profile]` removes it.

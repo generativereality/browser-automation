@@ -191,20 +191,11 @@ function fakeAutomationProfile(home) {
   return p
 }
 
-test('a new context starts EMPTY unless --clone-profile asks for a copy', async () => {
+test('a new context starts as a copy of the automation profile, without caches or lock files', async () => {
   await twoChromes(async ({ home, ba }) => {
     fakeAutomationProfile(home)
-    await ba('launch', '--context', 'blank', '--status')
-    const blank = join(home, '.browser-automation', 'contexts', 'blank', 'chrome-profile')
-    assert.deepEqual(readdirSync(blank), [], 'no logins, no extensions: a separate account starts from nothing')
-  })
-})
-
-test('--clone-profile copies the automation profile, without caches or lock files', async () => {
-  await twoChromes(async ({ home, ba }) => {
-    fakeAutomationProfile(home)
-    const r = await ba('launch', '--context', 'seeded', '--clone-profile', '--status')
-    assert.match(r.all, /copying the automation profile .* same logins and cookies/, r.all)
+    const r = await ba('launch', '--context', 'seeded', '--status')
+    assert.match(r.all, /starting from a copy of the automation profile .* same logins/, r.all)
     const c = join(home, '.browser-automation', 'contexts', 'seeded', 'chrome-profile')
     for (const kept of ['Local State', 'Default/Cookies', 'Default/Secure Preferences', 'Default/Extensions/abc/1.0/manifest.json', 'Default/Service Worker/Database/CURRENT']) {
       assert.ok(existsSync(join(c, kept)), `kept ${kept}`)
@@ -215,18 +206,35 @@ test('--clone-profile copies the automation profile, without caches or lock file
   })
 })
 
-test('--clone-profile never touches a context that already exists', async () => {
-  await twoChromes(async ({ home, profileDir, ba }) => {
+test('--empty-profile starts a new context with nothing', async () => {
+  await twoChromes(async ({ home, ba }) => {
     fakeAutomationProfile(home)
-    const r = await ba('port', '--context', 'work', '--clone-profile')
-    assert.match(r.all, /already exists, so --clone-profile does nothing/)
-    assert.deepEqual(readdirSync(profileDir), [], 'the existing profile is left as it was')
+    await ba('launch', '--context', 'blank', '--empty-profile', '--status')
+    const blank = join(home, '.browser-automation', 'contexts', 'blank', 'chrome-profile')
+    assert.deepEqual(readdirSync(blank), [], 'no logins, no extensions')
   })
 })
 
-test('--clone-profile without --context is refused', async () => {
+test('with no automation profile yet, a new context starts empty', async () => {
+  await twoChromes(async ({ home, ba }) => {
+    const r = await ba('launch', '--context', 'first', '--status')
+    assert.doesNotMatch(r.all, /copy of the automation profile/)
+    assert.deepEqual(readdirSync(join(home, '.browser-automation', 'contexts', 'first', 'chrome-profile')), [])
+  })
+})
+
+test('an existing context is never re-seeded', async () => {
+  await twoChromes(async ({ home, profileDir, ba }) => {
+    fakeAutomationProfile(home)
+    assert.equal((await ba('port', '--context', 'work')).code, 0)
+    assert.deepEqual(readdirSync(profileDir), [], 'the existing profile is left as it was')
+    assert.match((await ba('port', '--context', 'work', '--empty-profile')).all, /already exists, so --empty-profile does nothing/)
+  })
+})
+
+test('--empty-profile without --context is refused', async () => {
   await twoChromes(async ({ ba }) => {
-    const r = await ba('new', '-s', 'x', '--clone-profile')
+    const r = await ba('new', '-s', 'x', '--empty-profile')
     assert.notEqual(r.code, 0)
     assert.match(r.all, /use it with --context <name>/)
   })

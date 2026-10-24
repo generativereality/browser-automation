@@ -177,10 +177,10 @@ same one-action-per-snapshot rule as Playwright refs.
 
 Any command takes `--context <name>` (or `BAC_CONTEXT=<name>`) to act on a login
 context's Chrome instead of your own; a session opened in a context follows it
-without the flag. A new context starts with an empty profile. Add
-`--clone-profile` when creating it to start from a copy of the automation
-profile instead (its extensions, and all its logins and cookies; caches are left
-out).
+without the flag. A new context starts as a copy of the automation
+profile (its extensions, and its logins and cookies; caches are left out), so
+sign out there of any account it is not for; `--empty-profile` when creating it
+starts it with nothing. Your ordinary Chrome profile is never copied.
 
 ## Environment
 
