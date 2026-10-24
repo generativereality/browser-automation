@@ -156,6 +156,8 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Where the Chrome profile lives / move it out of Chrome's folder | `browser-automation profile` / `profile --migrate` |
 | List sessions + every open tab (id, title, url) | `browser-automation list` |
 | Open a background tab | `browser-automation new -s work [url]` |
+| A SECOND login next to the user's (another account) | `browser-automation new -s cf2 --context cloudflare-2 https://dash.cloudflare.com` |
+| List / save / forget login contexts | `browser-automation context` / `context save` / `context forget <name> [--close]` |
 | Navigate (session tab created if needed) | `browser-automation goto -s work https://example.com` |
 | Drive a tab the user already opened | `browser-automation snapshot -m nordnet` |
 | Adopt an open tab into a session | `browser-automation bind -s bank -m nordnet` |
@@ -214,6 +216,33 @@ browser-automation read -s cf                 # later runs: already authenticate
 ```
 
 There's no `state-save`/`state-load` to manage — the profile *is* the auth store.
+
+### A second account next to the first — `--context <name>`
+
+The profile holds ONE login per site. For a second account beside it (two
+Cloudflare dashboards, a client's Google account next to the user's), open the
+tab in a named **login context**: its own cookie jar and its own Chrome window,
+inside the same Chrome.
+
+```bash
+browser-automation new -s cf2 --context cloudflare-2 https://dash.cloudflare.com
+# the user signs in to the OTHER account in the new window, once
+browser-automation read -s cf2                # later commands: that account
+```
+
+- **A session remembers its context.** After Chrome restarts, the session's next
+  `goto` re-creates the context and puts its saved cookies back ("re-created
+  with N saved cookie(s)"). `read`/`snapshot` on a session whose tab is gone
+  still say "no live tab" — `goto` brings it back.
+- **Kept on disk, cookies only:** `~/.browser-automation/contexts/<name>.json`,
+  readable by this user only, saved whenever a command touches the tab and
+  before `launch --restart`. A site that keeps its login in localStorage needs
+  a fresh sign-in after a restart. `context forget <name>` deletes it.
+- **It is not a Chrome profile, on purpose.** A second profile in this Chrome
+  becomes Chrome's default while its window is open, so every OTHER session's
+  new tab opens in it, logged out — and nothing can steer them back (issue
+  #31). Don't open profiles in the automation Chrome.
+- A session's tab can't change context: use another `-s` name.
 
 ## Gotchas
 

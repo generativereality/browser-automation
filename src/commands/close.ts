@@ -23,6 +23,7 @@ export const closeCommand = define({
     }
 
     // Default is non-destructive: only close the tab if explicitly asked.
+    // (Resolving it above already saved a login context's cookies.)
     if (ctx.values.tab) {
       const ok = await closeTab(targetId).catch(() => false)
       consola.log(ok ? `Closed tab ${targetId.slice(0, 12)}….` : `Tab ${targetId.slice(0, 12)}… was already gone.`)

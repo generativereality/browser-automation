@@ -231,11 +231,95 @@ async function withBrowser<T>(fn: (s: CdpSession) => Promise<T>, timeout?: numbe
  * nothing and keep the generous default, which is right for them: a real tab
  * opening slowly should still open.
  */
-export async function createTab(url = 'about:blank', { timeout }: { timeout?: number } = {}): Promise<string> {
+export async function createTab(
+  url = 'about:blank',
+  { timeout, browserContextId }: { timeout?: number; browserContextId?: string } = {},
+): Promise<string> {
   return withBrowser(async (s) => {
-    const r = await s.send('Target.createTarget', { url, background: true }, timeout)
+    const params: Record<string, unknown> = { url, background: true }
+    // Only when asked: a tab with no context goes where Chrome's default is,
+    // which is the user's profile (see core/contexts.ts for when it is not).
+    if (browserContextId) params.browserContextId = browserContextId
+    const r = await s.send('Target.createTarget', params, timeout)
     return r.targetId as string
   }, timeout)
+}
+
+/** A cookie as CDP's `Storage.getCookies` returns it. Only the fields we pass back are typed. */
+export interface CdpCookie {
+  name: string
+  value: string
+  domain: string
+  path: string
+  expires: number
+  secure?: boolean
+  httpOnly?: boolean
+  session?: boolean
+  sameSite?: string
+  priority?: string
+  sourceScheme?: string
+  sourcePort?: number
+  partitionKey?: unknown
+}
+
+/**
+ * A new incognito-like browser context: its own cookie jar and its own window,
+ * inside the running Chrome. `disposeOnDetach: false` because this CLI
+ * disconnects after every command, and a context that died with the
+ * connection would be gone before the next one (measured 2026-10-24: with it,
+ * the context and its tabs outlive the connection). See core/contexts.ts.
+ */
+export async function createBrowserContext(): Promise<string> {
+  return withBrowser(async (s) => {
+    const r = await s.send('Target.createBrowserContext', { disposeOnDetach: false })
+    return r.browserContextId as string
+  })
+}
+
+/** The contexts CDP created and that still exist. Never the user's profile. */
+export async function liveBrowserContexts(): Promise<string[]> {
+  return withBrowser(async (s) => ((await s.send('Target.getBrowserContexts')).browserContextIds ?? []) as string[])
+}
+
+/** Which browser context a target belongs to (null when gone or unknown). */
+export async function targetContext(targetId: string): Promise<string | null> {
+  return withBrowser(async (s) => {
+    const infos = ((await s.send('Target.getTargets')).targetInfos ?? []) as Array<{ targetId: string; browserContextId?: string }>
+    return infos.find((t) => t.targetId === targetId)?.browserContextId ?? null
+  })
+}
+
+/**
+ * ⛔ Browser-level `Storage.*` only for a context id CDP created and that is
+ * still alive — checked on the SAME connection, immediately before. Chrome
+ * ignores a `browserContextId` it does not know and acts on its current
+ * default context instead, which can be the user's own profile: measured
+ * 2026-10-24 (issue #31), `Storage.clearCookies({ browserContextId: <a Chrome
+ * profile's id> })` cleared the default jar. A stale id after a Chrome restart
+ * is exactly such an unknown id.
+ */
+async function withKnownContext<T>(browserContextId: string, fn: (s: CdpSession) => Promise<T>): Promise<T> {
+  return withBrowser(async (s) => {
+    const live = ((await s.send('Target.getBrowserContexts')).browserContextIds ?? []) as string[]
+    if (!live.includes(browserContextId)) {
+      throw new Error(`browser context ${browserContextId} is not a live CDP-created context; refusing a cookie call that Chrome would apply to its default profile`)
+    }
+    return fn(s)
+  })
+}
+
+export async function getContextCookies(browserContextId: string): Promise<CdpCookie[]> {
+  return withKnownContext(browserContextId, async (s) => ((await s.send('Storage.getCookies', { browserContextId })).cookies ?? []) as CdpCookie[])
+}
+
+export async function setContextCookies(browserContextId: string, cookies: Array<Record<string, unknown>>): Promise<void> {
+  if (!cookies.length) return
+  await withKnownContext(browserContextId, (s) => s.send('Storage.setCookies', { browserContextId, cookies }))
+}
+
+/** Close a context and every tab in it. */
+export async function disposeBrowserContext(browserContextId: string): Promise<void> {
+  await withKnownContext(browserContextId, (s) => s.send('Target.disposeBrowserContext', { browserContextId }))
 }
 
 /**

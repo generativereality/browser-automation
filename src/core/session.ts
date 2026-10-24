@@ -14,6 +14,8 @@ export interface SessionState {
   targetId: string
   url?: string
   createdAt: string
+  /** The login context (core/contexts.ts) this session's tab lives in; absent = the user's profile. */
+  context?: string
 }
 
 function file(name: string): string {

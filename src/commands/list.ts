@@ -38,7 +38,7 @@ export const listCommand = define({
     if (shown.length) {
       consola.log(`# sessions (${shown.length}${ctx.values.all ? '' : ' live'})`)
       for (const s of shown) {
-        consola.log(`  ${s.name.padEnd(16)} [${liveIds.has(s.targetId) ? 'live' : 'stale'}] ${s.url ?? ''}`)
+        consola.log(`  ${s.name.padEnd(16)} [${liveIds.has(s.targetId) ? 'live' : 'stale'}] ${s.context ? `{${s.context}} ` : ''}${s.url ?? ''}`)
       }
     } else if (sessions.length) {
       consola.log(`# sessions (0 live)`)

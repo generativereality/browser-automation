@@ -5,6 +5,7 @@ import { normalizeUrl } from '../core/target.js'
 import { resolveOrCreateTargetId } from '../core/resolve.js'
 import { targetArgs, targetOpts } from '../core/args.js'
 import { navigate } from '../core/cdp.js'
+import { rememberContextOf } from '../core/contexts.js'
 import { ensureRenderer } from '../core/renderer-wake.js'
 import { withRendererDiagnosis } from '../core/renderer-health.js'
 import { wantsShow, showTab, describeNotShown } from '../core/show.js'
@@ -15,6 +16,11 @@ export const gotoCommand = define({
   args: {
     ...targetArgs,
     url: { type: 'positional', description: 'URL to navigate to' },
+    context: {
+      type: 'string',
+      short: 'c',
+      description: 'Open the tab in a named LOGIN CONTEXT — its own cookie jar and window, so a second account can be signed in next to your own (e.g. two Cloudflare dashboards). Created on first use; its cookies are kept on disk, so it stays logged in across Chrome restarts. See `browser-automation context`.',
+    },
     show: {
       type: 'boolean',
       description: 'Make this the SELECTED tab in its Chrome window, so someone watching Chrome sees it — only when the automation Chrome is already the frontmost app, so it never brings Chrome over another app. Default on with BAC_SHOW_TAB=1.',
@@ -28,7 +34,13 @@ export const gotoCommand = define({
 
     // Both halves are wrapped: creating the session's tab is itself a renderer
     // launch, and it fails the same silent way a cross-origin navigation does.
-    const { targetId, created } = await withRendererDiagnosis(() => resolveOrCreateTargetId(opts))
+    const context = ctx.values.context as string | undefined
+    const { targetId, created, contextRestored } = await withRendererDiagnosis(() => resolveOrCreateTargetId(opts, { context }))
+    if (contextRestored) {
+      consola.info(contextRestored.cookies
+        ? `Context "${contextRestored.name}": re-created with ${contextRestored.cookies} saved cookie(s) — its logins are back.`
+        : `Context "${contextRestored.name}": new, empty login context (its own window). Sign in there once; it is kept.`)
+    }
     // A tab we just created may not have a renderer yet — measured median 367ms
     // and a tail past 30s for a BACKGROUND target (core/renderer-wake.ts). The
     // navigation below would hit that as `Page.enable timed out`, which used to
@@ -44,6 +56,8 @@ export const gotoCommand = define({
       }
     }
     const nav = await withRendererDiagnosis(() => navigate(targetId, target))
+    // Sign-in flows set their cookies on a redirect: keep them now, not on the next command.
+    await rememberContextOf(targetId)
     // Say so when the load event never arrived. The navigation itself may be
     // perfectly fine — a page that never fires `load` is legal — but "we waited
     // and gave up" must not print the same line as "it loaded".
@@ -65,7 +79,8 @@ export const gotoCommand = define({
     if (!opts.match && !opts.target) {
       const name = opts.session || defaultSessionName()
       const prev = loadSession(name)
-      saveSession({ name, targetId, url: target, createdAt: prev?.createdAt ?? new Date().toISOString() })
+      const ctxName = context ?? prev?.context
+      saveSession({ name, targetId, url: target, createdAt: prev?.createdAt ?? new Date().toISOString(), ...(ctxName ? { context: ctxName } : {}) })
       consola.success(`[${name}] ${created ? 'opened tab + ' : ''}navigated → ${target}`)
     } else {
       consola.success(`[${targetId.slice(0, 12)}…] navigated → ${target}`)
