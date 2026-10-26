@@ -14,14 +14,19 @@ file under `~/.browser-automation/sessions/`.
 
 ## The model — read this first
 
-- **One shared headed Chrome per USER** on a uid-derived
-  `--remote-debugging-port` (`9223` for the first account on the machine) with a
-  persistent profile (`browser-automation`). Cookies, logins, and **browser
-  extensions (password managers, etc.) all persist** across runs and across
-  Claude Code restarts. The user can watch and complete interactive auth in the
-  same window.
-- **Per-target CDP, not whole-browser.** The CLI talks to a single tab's
-  `webSocketDebuggerUrl`. It never does Playwright-style "connect to the whole
+- **One shared headed Chrome per USER** with a persistent profile. Cookies,
+  logins, and **browser extensions (password managers, etc.) all persist** across
+  runs and across Claude Code restarts. The user can watch and complete
+  interactive auth in the same window.
+- **No debugging port (macOS, Linux).** Chrome runs with
+  `--remote-debugging-pipe`, held by a small broker that `launch` starts, and the
+  CLI reaches it through `~/.browser-automation/cdp.sock` — a socket only this OS
+  user can open. A debugging port has no authentication, so with one open any
+  program on the computer could drive the signed-in browser. Windows still uses
+  the uid-derived port (`9223` for the first account).
+- **Per-target CDP, not whole-browser.** Each command opens its own connection
+  bound to a single tab (over the socket, a CDP session the broker attaches for
+  that command and detaches after it). It never does Playwright-style "connect to the whole
   browser and enumerate every target" — so a stuck iframe/worker or a pile of
   open tabs can never wedge it (the failure that made `playwright-cli` time out).
 - **Address any tab on demand.** Every page command picks its tab three ways
@@ -113,8 +118,15 @@ that it keeps all three while losing the ability to give any new tab a
 **renderer** (see Gotchas, and [`references/renderer-health.md`](references/renderer-health.md)). Older CLIs printed `nothing to do.` in exactly that
 state — **if your `launch` ends without a `Renderer capacity:` line, you are on
 one of those; run `doctor`, which is the same probe.** Override the profile path
-with `BROWSER_AUTOMATION_PROFILE=...` and the CDP host with
-`BROWSER_AUTOMATION_CDP=http://localhost:PORT` if needed.
+with `BROWSER_AUTOMATION_PROFILE=...`. `BROWSER_AUTOMATION_CDP=http://localhost:PORT`
+drives a browser somebody else started on a port instead — which exposes it to
+everything on the computer, so only for a browser that holds no logins.
+
+**Moving off the port.** If this user's browser from an older CLI is still on the
+port, `launch` stops and says so: `browser-automation launch --restart` quits it
+(closing its tabs; logins are kept, and the profile moves out of Chrome's folder
+as below) and starts it on the pipe. A browser on the port with a *different*
+profile is left alone and only named.
 
 **The profile lives in `~/.browser-automation/chrome-profile`** (`browser-automation
 profile` prints it). Older CLIs kept it inside Chrome's own folder,

@@ -120,7 +120,7 @@ export interface Migration {
 }
 
 /** Is any Chrome of ours running with this --user-data-dir? */
-function inUse(dir: string): boolean {
+export function profileInUse(dir: string): boolean {
   try {
     execFileSync('pgrep', ['-u', String(process.getuid?.() ?? -1), '-f', '--', `--user-data-dir=${dir}`], {
       stdio: 'ignore',
@@ -153,7 +153,7 @@ export function migrateProfile(): Migration {
     }
   }
 
-  if (inUse(legacy)) {
+  if (profileInUse(legacy)) {
     return {
       outcome: 'in-use',
       dir: legacy,

@@ -3,13 +3,14 @@ import { consola } from 'consola'
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { launchScriptPath } from '../core/paths.js'
-import { cdpPort, closeBrowser, listPageTargets } from '../core/cdp.js'
+import { cdpPort, closeBrowser, listPageTargets, socketPath, usesPipe } from '../core/cdp.js'
 import { activeContextName } from '../core/context-store.js'
 import { personalizeIfNeeded } from '../core/context-launch.js'
 import { probeRenderer, explainRendererFailure, chromeLogPath } from '../core/renderer-health.js'
-import { migrateProfile, resolveProfile } from '../core/profile.js'
+import { legacyProfileDir, migrateProfile, resolveProfile } from '../core/profile.js'
 import { chromeExecutable } from '../core/chrome-path.js'
 import { cdpUp, startChrome, stopOurChrome } from '../core/launch-windows.js'
+import { pipeUp, portChromeProfile, portChromeRunning, quitPortChrome, startBroker, stopBroker } from '../core/launch-pipe.js'
 
 export const launchCommand = define({
   name: 'launch',
@@ -24,6 +25,10 @@ export const launchCommand = define({
     // "unsupported OS MINGW64_NT", so agents started Chrome by hand.
     if (process.platform === 'win32') {
       const ok = await launchWindows(ctx.values.status === true, ctx.values.restart === true)
+      if (!ok) process.exit(1)
+      if (ctx.values.status) return
+    } else if (usesPipe()) {
+      const ok = await launchPipe(ctx.values.status === true, ctx.values.restart === true)
       if (!ok) process.exit(1)
       if (ctx.values.status) return
     } else {
@@ -191,4 +196,91 @@ async function launchWindows(statusOnly: boolean, restart: boolean): Promise<boo
       consola.error(`Chrome did not serve CDP on :${port} within 60s. Chrome's log: ${r.log}`)
       return false
   }
+}
+
+/**
+ * macOS and Linux: Chrome on the DevTools pipe, behind the broker's socket.
+ * Returns false on a failure that must stop `launch` before the health check.
+ */
+async function launchPipe(statusOnly: boolean, restart: boolean): Promise<boolean> {
+  const sock = socketPath()
+  if (statusOnly) {
+    const up = await pipeUp()
+    consola.log(up ? `Chrome is up on the pipe (${sock})` : `Chrome is NOT running (nothing answers on ${sock})`)
+    return up
+  }
+
+  // **A browser of this account still on the open port**, from before the move.
+  // Whatever it holds, it is the exposure the move exists to close, so it is
+  // always named. But it is only THIS browser's business when it has the
+  // profile this launch is about to open: that one stops the pipe Chrome
+  // starting, and `--restart` quits it to switch it over. One on any other
+  // profile is somebody else's browser (another launcher's, a test's) and is
+  // never touched — `--restart` quitting it closed a person's tabs once.
+  if (portChromeRunning()) {
+    const theirs = portChromeProfile()
+    const mine = resolveProfile().dir
+    const where = `port ${cdpPort()}${theirs ? ` (profile ${theirs})` : ''}`
+    if (theirs !== mine) {
+      consola.warn(`This account also has a browser listening on ${where}; anything on this computer can drive it. It is not this one, so it is left alone.`)
+    } else if (!restart) {
+      consola.error(
+        `This browser is still running on ${where}, from before the move to the pipe, and anything on this `
+        + `computer can drive it. Switch it over:\n  browser-automation launch --restart\n`
+        + `That quits it (closing its tabs; logins are kept) and starts it again on the pipe.`,
+      )
+      return false
+    } else {
+      consola.info(`Quitting this browser on ${where} to start it again on the pipe.`)
+      await quitPortChrome().catch(() => {})
+      // The script's quit-and-wait: waits for the profile's lock to go before
+      // it escalates to signals.
+      const r = spawnSync('bash', [launchScriptPath(), '--port', String(cdpPort()), '--stop', '--profile', theirs], { stdio: 'inherit' })
+      if (r.status !== 0) return false
+    }
+  }
+
+  if (await pipeUp()) {
+    if (!restart) {
+      consola.log(`Already running on the pipe (${sock}).`)
+      consola.log('Drive it with: browser-automation goto -s <session> <url>')
+      return true
+    }
+    const tabs = await listPageTargets().then((t) => t.length).catch(() => null)
+    consola.info(`Restarting Chrome — closing ${tabs ?? '?'} open tab(s).`)
+    try {
+      await stopBroker((s) => consola.warn(s))
+    } catch (e: any) {
+      consola.error(String(e?.message ?? e))
+      return false
+    }
+  }
+
+  const m = migrateProfile()
+  if (m.outcome === 'moved') consola.success(`Profile ${m.detail} — logins travel with it.`)
+  if (process.platform === 'darwin' && m.dir === legacyProfileDir()) {
+    // Exec'd directly, as the pipe needs, Chrome is refused its own folder by
+    // macOS, and dies on a misleading SingletonLock error.
+    consola.error(
+      `The profile is still inside Chrome's own folder (${m.dir}), where macOS refuses a Chrome `
+      + `started with the DevTools pipe.${m.detail ? ` ${m.detail}` : ''}`,
+    )
+    return false
+  }
+
+  const chrome = chromeExecutable()
+  if (chrome.ignored) consola.warn(`Ignoring ${chrome.ignored}.`)
+  if (!chrome.path) {
+    consola.error('Chrome not found. Install it, or set BROWSER_AUTOMATION_CHROME to its binary.')
+    return false
+  }
+  const r = await startBroker(chrome.path, m.dir, chromeLogPath())
+  if (!r.ok) {
+    consola.error(r.reason)
+    return false
+  }
+  consola.log(`Chrome launched on the pipe in ${r.seconds}s (profile: ${m.dir}, socket: ${sock}, log: ${chromeLogPath()})`)
+  consola.log('No debugging port is open: only this account can reach it, through the socket.')
+  consola.log('Drive it with: browser-automation goto -s <session> <url>')
+  return true
 }
