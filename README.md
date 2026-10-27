@@ -23,8 +23,14 @@ server holding a browser object) has three recurring failures:
 This CLI fixes all three by talking **per-target CDP** and keeping **no
 long-lived process**:
 
-- Each command connects to one tab's `webSocketDebuggerUrl` — no whole-browser
-  enumeration, so target count never wedges it.
+- Each command connects to one tab — no whole-browser enumeration, so target
+  count never wedges it.
+- Chrome listens on **no debugging port**. It runs with `--remote-debugging-pipe`
+  behind a small broker that `launch` starts, reachable only by your OS user: a
+  0600 socket in a 0700 folder (macOS, Linux), or a named pipe whose random name
+  only your user can read (Windows). Login contexts get a broker each. A port
+  has no authentication, so any program on the computer could drive a browser
+  that listens on one.
 - Each session owns one tab by name (`-s <name>`); commands only touch that tab.
   New tabs open in the background and the CLI never activates/foregrounds a tab,
   so parallel sessions and the user never collide.
@@ -186,7 +192,9 @@ context, set `BAC_CONTEXT` in the env of that project's Claude settings.
 
 ## Environment
 
-- `BROWSER_AUTOMATION_PORT` — the debugging port. **Defaults to one per user**,
+- `BROWSER_AUTOMATION_PORT` — the debugging port, used only with
+  `BROWSER_AUTOMATION_CDP` and to find a Chrome of yours from before the move to
+  the pipe (`launch --restart` switches it over). **Defaults to one per user**,
   not one per machine: `127.0.0.1` is machine-wide and CDP has no
   authentication, so a single shared port means the first account to launch owns
   it and every other account's automation silently drives *that* account's

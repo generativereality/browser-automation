@@ -1,9 +1,12 @@
 # browser-automation
 
 Daemonless, per-tab-isolated browser automation CLI (`@generativereality/browser-automation`,
-bin `browser-automation`) that drives one shared headed Chrome **per user** (a
-uid-derived debugging port; `9223` for the first account) over
-per-target Chrome DevTools Protocol. See `README.md` and `skills/browser/SKILL.md`.
+bin `browser-automation`) that drives one shared headed Chrome **per user** over
+per-target Chrome DevTools Protocol, on the DevTools **pipe** behind a broker
+(`src/core/broker.ts`): a 0600 Unix socket on macOS/Linux, a randomly named pipe
+on Windows, one broker per login context. No debugging port; the uid-derived
+port (`9223` for the first account) is only for `BROWSER_AUTOMATION_CDP` and for
+finding a Chrome from before the move. See `README.md` and `skills/browser/SKILL.md`.
 
 ## Versioning policy — READ THIS
 

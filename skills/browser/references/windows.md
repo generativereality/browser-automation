@@ -21,16 +21,17 @@ With **zero open tabs**, `list` prints the full saved-session list — every row
 describes a saved session whose tab is gone, not the browser's health. The tell is the
 `# open tabs (0)` line at the **end** of the output, easy to miss under a long listing.
 
-⭐ **Ask the CDP endpoint instead.** It answers in one call and names the browser:
+⭐ **Ask `launch --status` instead.** It answers in one call (exit 0 = up):
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:9223/json/version" -TimeoutSec 5   # Browser : Chrome/…
+& "$env:APPDATA\npm\browser-automation.cmd" launch --status   # Chrome is up on the pipe (\\.\pipe\browser-automation-…)
 ```
 
-A stale session list plus a live `/json/version` means **open a tab**
-(`new -s [name] [url]`), not relaunch the browser. It also tells you *which* browser is
-on the port: a Chrome started by hand, or an Edge standing in for Chrome, answers the same
-way.
+A stale session list plus a browser that is up means **open a tab**
+(`new -s [name] [url]`), not relaunch the browser. Since 0.7.0 Chrome on Windows
+listens on no port: `http://127.0.0.1:9223/json/version` answering means a Chrome
+from before the move, which anything on the computer can drive —
+`launch --restart` switches it over.
 
 ## `|`, `&` and parentheses break through the `.cmd` shim
 

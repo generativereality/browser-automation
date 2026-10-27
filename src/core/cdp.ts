@@ -1,10 +1,12 @@
 // Daemonless, per-target Chrome DevTools Protocol client.
 //
-// Two transports, one shape. By default (macOS and Linux) Chrome is started with
+// Two transports, one shape. By default Chrome is started with
 // `--remote-debugging-pipe` by a small broker (core/broker.ts) that owns the pipe
-// and serves it on a Unix socket only this OS user can open; Chrome then listens on
-// no port at all. With `BROWSER_AUTOMATION_CDP` set, or on Windows, it is the old
-// TCP port. Either way each command still opens its own short connection to ONE
+// and serves it to this OS user only: on a Unix socket in a 0700 directory
+// (macOS, Linux), or on a named pipe with a random name that only this user's
+// state file records (Windows). Chrome then listens on no port at all. That holds
+// for login contexts too, each behind its own broker. Only with
+// `BROWSER_AUTOMATION_CDP` set is it the old TCP port. Either way each command still opens its own short connection to ONE
 // target and closes it — over the socket, that connection is a CDP session the
 // broker attaches for it and detaches when it goes.
 //
@@ -17,10 +19,12 @@
 // its own targetId; we never call Target.activateTarget / Page.bringToFront,
 // so we never steal focus from the user or from sibling sessions.
 
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { createConnection, createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { activeContext } from './context-store.js'
+import { activeContext, contextsDir } from './context-store.js'
 
 // The debugging port is PER-USER, and that is not a nicety.
 //
@@ -87,23 +91,62 @@ export function cdpHost(): string {
  * The pipe is not reachable at all except through the broker's socket, which
  * lives in a 0700 directory under ~ and is itself 0600.
  *
- * Port stays where it has to: `BROWSER_AUTOMATION_CDP` names one explicitly (a
- * browser somebody else started, the test fakes), Windows, whose launcher
- * (core/launch-windows.ts) has not been moved yet, and a login context, which is
- * its own Chrome on the port it was given (core/context-store.ts).
+ * Port stays only where somebody asked for it: `BROWSER_AUTOMATION_CDP` names one
+ * explicitly (a browser somebody else started, the test fakes). It does not
+ * apply to a login context, which is always this CLI's own Chrome, on its own
+ * broker. Windows and contexts were on the port until 0.7.0.
  */
 export function usesPipe(): boolean {
-  return !activeContext() && !process.env.BROWSER_AUTOMATION_CDP && process.platform !== 'win32'
+  if (activeContext()) return true
+  return !process.env.BROWSER_AUTOMATION_CDP
 }
 
-/** The broker's directory: socket, state file, broker log. 0700. */
-export function brokerDir(): string {
+function baseDir(): string {
   return process.env.BROWSER_AUTOMATION_HOME || join(homedir(), '.browser-automation')
 }
 
-/** The Unix socket the broker serves the pipe on. */
+/**
+ * The broker's directory: state file, lock, broker and Chrome logs, and (macOS,
+ * Linux) the socket. 0700. A login context's is its own folder, beside its profile.
+ */
+export function brokerDir(): string {
+  const ctx = activeContext()
+  return ctx ? join(contextsDir(), ctx.name) : baseDir()
+}
+
+/** The state file a broker writes once it serves: pids, profile, and where it listens. */
+export function brokerStatePath(dir = brokerDir()): string {
+  return join(dir, 'broker.json')
+}
+
+/**
+ * Where the broker for the active Chrome listens.
+ *
+ * macOS and Linux: a Unix socket in the broker's 0700 directory. Its path is
+ * capped at 104 bytes on macOS, and a context's folder can be longer than that
+ * allows (a 64-character name), so a long one gets a short socket in a 0700
+ * folder of its own, named after the directory it stands for.
+ *
+ * Windows: a named pipe. Named pipes have no directory to protect them, so the
+ * broker picks a random name when it starts and records it in its state file,
+ * which only this user can read. Nobody else can guess the name, so nobody can
+ * create it first and wait for us to connect, and the pipe's default ACL keeps
+ * other accounts from opening it for writing. Before a broker has written its
+ * state, this is a name that answers nothing.
+ */
 export function socketPath(): string {
-  return process.env.BROWSER_AUTOMATION_SOCKET || join(brokerDir(), 'cdp.sock')
+  if (process.env.BROWSER_AUTOMATION_SOCKET && !activeContext()) return process.env.BROWSER_AUTOMATION_SOCKET
+  const dir = brokerDir()
+  if (process.platform === 'win32') {
+    try {
+      const st = JSON.parse(readFileSync(brokerStatePath(dir), 'utf8')) as { socket?: unknown }
+      if (typeof st.socket === 'string' && st.socket.startsWith('\\\\.\\pipe\\')) return st.socket
+    } catch { /* no broker yet */ }
+    return '\\\\.\\pipe\\browser-automation-not-running'
+  }
+  const p = join(dir, 'cdp.sock')
+  if (Buffer.byteLength(p) <= 100) return p
+  return join(baseDir(), 'sockets', `${createHash('sha256').update(dir).digest('hex').slice(0, 16)}.sock`)
 }
 
 /** What to call the browser we are driving, in messages. */

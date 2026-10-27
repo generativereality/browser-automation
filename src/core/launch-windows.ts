@@ -1,3 +1,7 @@
+// Windows on the PORT: only with BROWSER_AUTOMATION_CDP set, since 0.7.0 (the
+// default is the pipe, core/launch-pipe.ts), and to find and quit this user's
+// Chrome from before the move, which is still listening on its port.
+//
 // `launch` on Windows: the same contract as scripts/launch-chrome.sh on macOS and
 // Linux, implemented here because that script is POSIX through and through
 // (open(1), pgrep, pkill, nohup) and under Git Bash it stopped at its OS check:
@@ -47,23 +51,61 @@ export async function cdpUp(port: number): Promise<boolean> {
  * line on Windows, and `wmic` is gone from Windows 11 25H2.
  */
 export function ourChromePid(port: number): number {
+  return ourChromeProcess(port)?.pid ?? 0
+}
+
+/**
+ * OUR Chrome's browser process on this port, with the profile it was started
+ * on, or null. The command line comes back base64'd, so a profile path with
+ * spaces or non-ASCII characters survives the console's code page.
+ */
+export function ourChromeProcess(port: number): { pid: number; profile: string | null } | null {
   const script = [
     "$ProgressPreference = 'SilentlyContinue'",
     `$re = '--remote-debugging-port=${port}(\\s|"|$)'`,
     '$sid = [System.Diagnostics.Process]::GetCurrentProcess().SessionId',
     "$b = Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" |",
     "  Where-Object { $_.SessionId -eq $sid -and $_.CommandLine -and $_.CommandLine -match $re -and $_.CommandLine -notmatch '--type=' } |",
-    '  Select-Object -First 1 -ExpandProperty ProcessId',
-    "Write-Output ('BA-PID ' + [int]$b)",
+    '  Select-Object -First 1',
+    "if ($b) { Write-Output ('BA-PID ' + [int]$b.ProcessId + ' ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($b.CommandLine))) } else { Write-Output 'BA-PID 0' }",
   ].join('\n')
   try {
     const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 20000, windowsHide: true,
     })
-    return Number(/^BA-PID (\d+)\s*$/m.exec(out)?.[1] ?? 0)
+    const m = /^BA-PID (\d+)(?: (\S+))?\s*$/m.exec(out)
+    const pid = Number(m?.[1] ?? 0)
+    if (!pid) return null
+    const cmd = m?.[2] ? Buffer.from(m[2], 'base64').toString('utf8') : ''
+    return { pid, profile: userDataDir(cmd) }
   } catch {
-    return 0
+    return null
   }
+}
+
+/** --user-data-dir from a Windows command line, quoted ("--user-data-dir=C:\a b") or not. Pure. */
+export function userDataDir(cmd: string): string | null {
+  const quoted = /"--user-data-dir=([^"]+)"/.exec(cmd) ?? /--user-data-dir="([^"]+)"/.exec(cmd)
+  if (quoted) return quoted[1]
+  return /--user-data-dir=(\S+)/.exec(cmd)?.[1] ?? null
+}
+
+/**
+ * Quit OUR Chrome on this port, from before the move to the pipe, through the
+ * PORT (never closeBrowser(), which would address the pipe browser), and wait
+ * for it to exit. taskkill only if it will not go.
+ */
+export async function stopPortChrome(port: number, quit: () => Promise<void>, say: (s: string) => void): Promise<void> {
+  const pid = ourChromePid(port)
+  if (!pid) return
+  await quit().catch(() => {})
+  for (let i = 0; i < 60 && alive(pid); i++) await sleep(250)
+  if (alive(pid)) {
+    say(`Chrome (pid ${pid}) did not exit within 15s of being asked to quit; ending it.`)
+    try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }) } catch { /* reported below */ }
+    for (let i = 0; i < 20 && alive(pid); i++) await sleep(250)
+  }
+  if (alive(pid)) throw new Error(`Chrome on :${port} (pid ${pid}) would not exit. Not starting another on its profile.`)
 }
 
 function alive(pid: number): boolean {

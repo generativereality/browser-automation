@@ -80,3 +80,55 @@ test('without --restart, a port browser on THIS profile stops the launch with th
     rmSync(home, { recursive: true, force: true })
   }
 })
+
+// Login contexts moved onto the pipe too (each was its own Chrome on a TCP port
+// of its own until 0.7.0, reachable by anything on the computer).
+const ctxState = (home, name) => join(home, '.browser-automation', 'contexts', name, 'broker.json')
+const readState = (f) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return null } }
+const stopAt = (f) => { const st = readState(f); if (st && alive(st.brokerPid)) process.kill(st.brokerPid, 'SIGTERM') }
+
+test('launch --context starts the context\'s own broker, beside the person\'s, on a socket of its own', async () => {
+  const { home, env } = setup()
+  try {
+    const c = await cli(env, 'launch', '--context', 'work')
+    assert.equal(c.code, 0, c.out)
+    assert.match(c.out, /launched on the pipe/)
+    assert.match(c.out, /No debugging port is open/)
+    const work = readState(ctxState(home, 'work'))
+    assert.ok(work, 'the context\'s broker wrote its state in the context\'s folder')
+    assert.equal(work.socket, join(home, '.browser-automation', 'contexts', 'work', 'cdp.sock'))
+    assert.equal(readState(join(home, '.browser-automation', 'broker.json')), null, 'and did not start the person\'s')
+
+    const own = await cli(env, 'launch')
+    assert.equal(own.code, 0, own.out)
+    const mine = readState(join(home, '.browser-automation', 'broker.json'))
+    assert.ok(mine, 'the person\'s broker is separate')
+    assert.notEqual(mine.socket, work.socket)
+    assert.notEqual(mine.chromePid, work.chromePid, 'two Chromes, not one')
+
+    const list = await cli(env, 'context')
+    assert.match(list.out, /\(your automation Chrome\)\s+\[running\]/)
+    assert.match(list.out, /work\s+\[running\]/)
+    assert.equal((await cli(env, 'launch', '--context', 'work', '--status')).code, 0)
+  } finally {
+    stopAt(ctxState(home, 'work'))
+    stopBroker(home)
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a context whose socket path would be too long for a Unix socket gets a short one', async () => {
+  const { home, env } = setup()
+  const name = 'a-context-name-long-enough-to-push-the-path-past-the-limit-0123'
+  try {
+    const c = await cli(env, 'launch', '--context', name)
+    assert.equal(c.code, 0, c.out)
+    const st = readState(ctxState(home, name))
+    assert.ok(st, c.out)
+    assert.ok(st.socket.startsWith(join(home, '.browser-automation', 'sockets') + '/'), st.socket)
+    assert.ok(Buffer.byteLength(st.socket) <= 100, st.socket)
+  } finally {
+    stopAt(ctxState(home, name))
+    rmSync(home, { recursive: true, force: true })
+  }
+})
