@@ -131,8 +131,12 @@ export function brokerStatePath(dir = brokerDir()): string {
  * broker picks a random name when it starts and records it in its state file,
  * which only this user can read. Nobody else can guess the name, so nobody can
  * create it first and wait for us to connect, and the pipe's default ACL keeps
- * other accounts from opening it for writing. Before a broker has written its
- * state, this is a name that answers nothing.
+ * other accounts from opening it for writing. Measured on Windows 11 ARM64
+ * (Node 22, 2026-10-27): full control for this user, SYSTEM and Administrators;
+ * Read only for Everyone and Anonymous, which drives nothing: a read-only
+ * connection cannot send the line that attaches it, and each connection is its
+ * own pipe instance. Before a broker has written its state, this is a name that
+ * answers nothing.
  */
 export function socketPath(): string {
   if (process.env.BROWSER_AUTOMATION_SOCKET && !activeContext()) return process.env.BROWSER_AUTOMATION_SOCKET

@@ -232,6 +232,10 @@ function fakeAutomationProfile(home) {
   mkdirSync(join(p, 'Default', 'Local Extension Settings', 'abc'), { recursive: true })
   writeFileSync(join(p, 'Default', 'Local Extension Settings', 'abc', 'CURRENT'), 'ext data')
   writeFileSync(join(p, 'Default', 'Cookies'), 'cookies')
+  // Where current Chrome keeps them (Windows, Chrome 156): under Network/.
+  mkdirSync(join(p, 'Default', 'Network'), { recursive: true })
+  writeFileSync(join(p, 'Default', 'Network', 'Cookies'), 'cookies')
+  writeFileSync(join(p, 'Default', 'Network', 'TransportSecurity'), 'hsts')
   writeFileSync(join(p, 'Default', 'Secure Preferences'), '{}')
   writeFileSync(join(p, 'Default', 'Extensions', 'abc', '1.0', 'manifest.json'), '{}')
   writeFileSync(join(p, 'Default', 'Service Worker', 'Database', 'CURRENT'), 'sw')
@@ -250,10 +254,10 @@ test('a new context gets the automation profile\'s EXTENSIONS, not its logins, a
     const r = await ba('launch', '--context', 'proj', '--status')
     assert.match(r.all, /copying the EXTENSIONS .* no site logins/, r.all)
     const c = ctxDir(home, 'proj')
-    for (const kept of ['Default/Extensions/abc/1.0/manifest.json', 'Default/Local Extension Settings/abc/CURRENT', 'Default/Service Worker/Database/CURRENT', 'Default/Secure Preferences']) {
+    for (const kept of ['Default/Extensions/abc/1.0/manifest.json', 'Default/Local Extension Settings/abc/CURRENT', 'Default/Service Worker/Database/CURRENT', 'Default/Secure Preferences', 'Default/Network/TransportSecurity']) {
       assert.ok(existsSync(join(c, kept)), `kept ${kept}`)
     }
-    for (const left of ['Default/Cookies', 'Default/Login Data', 'Default/Web Data', 'Default/History', 'Default/Local Storage', 'Default/Service Worker/CacheStorage',
+    for (const left of ['Default/Cookies', 'Default/Network/Cookies', 'Default/Login Data', 'Default/Web Data', 'Default/History', 'Default/Local Storage', 'Default/Service Worker/CacheStorage',
       'Default/Cache', 'Default/Code Cache', 'GrShaderCache', 'SingletonLock', 'Cookies', 'ba-probe']) {
       assert.ok(!existsSync(join(c, left)), `left out ${left}`)
     }

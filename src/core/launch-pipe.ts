@@ -136,8 +136,24 @@ export async function startBroker(chrome: string, profile: string, chromeLog: st
   }
   return {
     ok: false,
-    reason: `Chrome did not answer on ${socketPath()} within 60s. Broker log: ${brokerLogPath()}; Chrome's log: ${chromeLog}`,
+    reason: `Chrome did not answer on ${socketPath()} within 60s.${refusedDevTools(chromeLog)} Broker log: ${brokerLogPath()}; Chrome's log: ${chromeLog}`,
   }
+}
+
+/**
+ * Chrome runs, but refused DevTools on the pipe, and says why only in its log.
+ * It refuses remote debugging on its DEFAULT profile, and decides which that is
+ * from its app-data folder: on Windows with USERPROFILE pointed elsewhere it
+ * could not find that folder, took our profile for its default, and the launch
+ * timed out with nothing else to go on (2026-10-27).
+ */
+function refusedDevTools(chromeLog: string): string {
+  let tail = ''
+  try { tail = readFileSync(chromeLog, 'utf8').slice(-16384) } catch { return '' }
+  if (!tail.includes('requires a non-default data directory')) return ''
+  return ' Chrome refused DevTools: it took this profile for its default one ("DevTools remote debugging requires a'
+    + ' non-default data directory"). It decides that from its own app-data folder, so this happens when it cannot'
+    + ` find that folder: check that ${process.platform === 'win32' ? 'USERPROFILE and LOCALAPPDATA are' : 'HOME is'} this account's own.`
 }
 
 /**

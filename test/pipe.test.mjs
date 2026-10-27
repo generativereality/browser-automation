@@ -54,7 +54,9 @@ const wait = async (cond, ms = 10000) => {
 let broker
 test.before(async () => {
   broker = spawn(process.execPath, [CLI, 'broker', '--chrome', FAKE, '--profile', join(home, 'profile'), '--log', join(home, 'chrome.log')], { env, stdio: 'ignore' })
-  assert.ok(await wait(() => existsSync(sock)), 'the broker never opened its socket')
+  // The state file, not just the socket: the broker writes it a moment after it
+  // starts listening, and a busy machine ran the first test in between.
+  assert.ok(await wait(() => existsSync(sock) && existsSync(join(dirname(sock), 'broker.json'))), 'the broker never opened its socket')
 })
 test.after(() => {
   broker?.kill('SIGKILL')
