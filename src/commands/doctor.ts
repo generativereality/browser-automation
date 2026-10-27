@@ -1,7 +1,8 @@
 import { define } from 'gunshi'
 import { consola } from 'consola'
 import { execFileSync } from 'node:child_process'
-import { cdpHost, cdpPort, listTargets } from '../core/cdp.js'
+import { browserVersion, cdpHost, cdpPort, listTargets, socketPath, usesPipe } from '../core/cdp.js'
+import { portChromeRunning } from '../core/launch-pipe.js'
 import { listSessions } from '../core/session.js'
 import { resolveProfile } from '../core/profile.js'
 import { chromeExecutable, chromeSearchDescription } from '../core/chrome-path.js'
@@ -43,7 +44,15 @@ export const doctorCommand = define({
     if (major >= 22) ok(`Node ${process.versions.node} (global WebSocket available)`)
     else bad(`Node ${process.versions.node} — need >= 22 for the global WebSocket CDP client`)
 
-    consola.log(`  • CDP host: ${cdpHost()} (port ${cdpPort()} — derived from uid ${process.getuid?.() ?? '?'})`)
+    if (usesPipe()) {
+      consola.log(`  • Transport: DevTools pipe, served on ${socketPath()} — no debugging port open`)
+      if (portChromeRunning()) {
+        bad(`a Chrome of yours is still listening on port ${cdpPort()} (from before the pipe): anything on this `
+          + `computer can drive it. Switch it over: browser-automation launch --restart`)
+      }
+    } else {
+      consola.log(`  • CDP host: ${cdpHost()} (port ${cdpPort()} — derived from uid ${process.getuid?.() ?? '?'})`)
+    }
     const profile = resolveProfile()
     consola.log(`  • Profile:  ${profile.dir}`)
     if (profile.source === 'legacy') {
@@ -68,7 +77,15 @@ export const doctorCommand = define({
 
     // Chrome / CDP
     let version: any
-    try {
+    if (usesPipe()) {
+      // The socket is in this user's 0700 directory, so whatever answers is ours.
+      try {
+        ok(`Chrome reachable: ${(await browserVersion()).product}`)
+      } catch {
+        bad(`No browser on ${socketPath()} — run:  browser-automation launch`)
+        return
+      }
+    } else try {
       const r = await fetch(`${cdpHost()}/json/version`)
       version = await r.json()
       if (!portIsOurs()) {

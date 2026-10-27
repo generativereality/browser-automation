@@ -75,7 +75,8 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cdpHost, cdpPort, closeTab, createTab, listPageTargets } from './cdp.js'
+import { brokerDir, cdpHost, cdpPort, closeTab, createTab, listPageTargets, usesPipe } from './cdp.js'
+import { brokerState } from './launch-pipe.js'
 import { askRenderer, ensureRenderer, envInt, type RendererOutcome } from './renderer-wake.js'
 
 /** First attempt's budget. Later attempts double it. */
@@ -292,14 +293,29 @@ function chromeProcesses(): { browser: number | null; renderers: number | null }
   const uid = String(process.getuid?.() ?? -1)
   let out: string
   try {
-    out = execFileSync('ps', ['-Ao', 'pid=,uid=,command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
+    out = execFileSync('ps', ['-Ao', 'pid=,ppid=,uid=,command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
   } catch {
     return { browser: null, renderers: null }
+  }
+  // On the pipe there is no flag to find it by, and no need: the broker
+  // recorded the pid of the Chrome it started. Renderers are its children on
+  // macOS; on Linux they hang off the zygote, so match the profile there.
+  if (usesPipe()) {
+    const st = brokerState()
+    const browser = st && out.split('\n').some((l) => new RegExp(`^\\s*${st.chromePid}\\s`).test(l)) ? st.chromePid : null
+    if (browser === null) return { browser: null, renderers: null }
+    let renderers = 0
+    for (const line of out.split('\n')) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line)
+      if (!m || m[3] !== uid || !/--type=renderer\b/.test(m[4])) continue
+      if (Number(m[2]) === browser || m[4].includes(`--user-data-dir=${st!.profile}`)) renderers++
+    }
+    return { browser, renderers }
   }
   let browser: number | null = null
   let renderers = 0
   for (const line of out.split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)
+    const m = /^\s*(\d+)\s+\d+\s+(\d+)\s+(.*)$/.exec(line)
     if (!m) continue
     const [, pid, u, cmd] = m
     if (u !== uid || !cmd.includes(flag)) continue
@@ -353,7 +369,10 @@ export function chromeLogPath(): string {
   const tmp = process.platform === 'win32'
     ? tmpdir()
     : process.env.TMPDIR?.replace(/\/$/, '') || '/tmp'
-  return process.env.BROWSER_AUTOMATION_LOG || `${tmp}/chrome-${targetPort()}.log`
+  if (process.env.BROWSER_AUTOMATION_LOG) return process.env.BROWSER_AUTOMATION_LOG
+  // On the pipe, beside the socket: this user's 0700 directory, not shared /tmp.
+  if (usesPipe()) return join(brokerDir(), 'chrome.log')
+  return `${tmp}/chrome-${targetPort()}.log`
 }
 
 // ── Instrumentation ────────────────────────────────────────────────────────

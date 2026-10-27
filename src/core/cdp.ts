@@ -1,5 +1,13 @@
 // Daemonless, per-target Chrome DevTools Protocol client.
 //
+// Two transports, one shape. By default (macOS and Linux) Chrome is started with
+// `--remote-debugging-pipe` by a small broker (core/broker.ts) that owns the pipe
+// and serves it on a Unix socket only this OS user can open; Chrome then listens on
+// no port at all. With `BROWSER_AUTOMATION_CDP` set, or on Windows, it is the old
+// TCP port. Either way each command still opens its own short connection to ONE
+// target and closes it — over the socket, that connection is a CDP session the
+// broker attaches for it and detaches when it goes.
+//
 // Every operation opens a short-lived WebSocket to ONE target (a single tab's
 // `webSocketDebuggerUrl`, or the browser endpoint for tab create/close), runs
 // its commands, and closes. There is no long-lived process and no
@@ -9,7 +17,9 @@
 // its own targetId; we never call Target.activateTarget / Page.bringToFront,
 // so we never steal focus from the user or from sibling sessions.
 
-import { createServer } from 'node:net'
+import { createConnection, createServer } from 'node:net'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { activeContext } from './context-store.js'
 
 // The debugging port is PER-USER, and that is not a nicety.
@@ -70,6 +80,42 @@ export function cdpHost(): string {
 }
 
 /**
+ * Pipe or port.
+ *
+ * The port is reachable by every process on the machine and has no
+ * authentication, so anything local could drive this user's signed-in browser.
+ * The pipe is not reachable at all except through the broker's socket, which
+ * lives in a 0700 directory under ~ and is itself 0600.
+ *
+ * Port stays where it has to: `BROWSER_AUTOMATION_CDP` names one explicitly (a
+ * browser somebody else started, the test fakes), Windows, whose launcher
+ * (core/launch-windows.ts) has not been moved yet, and a login context, which is
+ * its own Chrome on the port it was given (core/context-store.ts).
+ */
+export function usesPipe(): boolean {
+  return !activeContext() && !process.env.BROWSER_AUTOMATION_CDP && process.platform !== 'win32'
+}
+
+/** The broker's directory: socket, state file, broker log. 0700. */
+export function brokerDir(): string {
+  return process.env.BROWSER_AUTOMATION_HOME || join(homedir(), '.browser-automation')
+}
+
+/** The Unix socket the broker serves the pipe on. */
+export function socketPath(): string {
+  return process.env.BROWSER_AUTOMATION_SOCKET || join(brokerDir(), 'cdp.sock')
+}
+
+/** What to call the browser we are driving, in messages. */
+export function endpointLabel(): string {
+  return usesPipe() ? `the browser behind ${socketPath()}` : cdpHost()
+}
+
+/** Endpoints handed around in place of webSocketDebuggerUrl when on the pipe. */
+const PIPE_BROWSER = 'pipe:browser'
+const pipePage = (targetId: string) => `pipe:target:${targetId}`
+
+/**
  * Ports for login contexts, decided here like every other port. A block well
  * above the per-user range (BASE_PORT … BASE_PORT+999), so a context can never
  * land on another account's Chrome. The first free one not already given to a
@@ -96,7 +142,7 @@ export async function allocateContextPort(taken: number[]): Promise<number> {
 /** A target has gone away (tab closed, or Chrome restarted -> new targetIds). */
 export class TargetGoneError extends Error {
   constructor(public targetId: string) {
-    super(`target ${targetId} not found on ${cdpHost()} (tab closed or Chrome restarted)`)
+    super(`target ${targetId} not found on ${endpointLabel()} (tab closed or Chrome restarted)`)
     this.name = 'TargetGoneError'
   }
 }
@@ -116,12 +162,29 @@ async function httpJson<T>(path: string): Promise<T> {
 }
 
 export async function browserWsUrl(): Promise<string> {
+  if (usesPipe()) return PIPE_BROWSER
   const v = await httpJson<{ webSocketDebuggerUrl: string }>('/json/version')
   return v.webSocketDebuggerUrl
 }
 
+/** `Browser.getVersion`, from either transport. Throws when nothing answers. */
+export async function browserVersion(timeout = 5000): Promise<{ product: string }> {
+  if (!usesPipe()) {
+    const v = await httpJson<{ Browser: string }>('/json/version')
+    return { product: v.Browser }
+  }
+  return withBrowser((s) => s.send('Browser.getVersion', {}, timeout), timeout)
+}
+
 export async function listTargets(): Promise<CdpTarget[]> {
-  return httpJson<CdpTarget[]>('/json/list')
+  if (!usesPipe()) return httpJson<CdpTarget[]>('/json/list')
+  // The same list /json/list gives, from the protocol: Chrome's HTTP handler is
+  // Target.getTargets with a URL per target. `browser_ui` targets are Chrome's
+  // own UI, which /json/list leaves out.
+  const r = await withBrowser((s) => s.send('Target.getTargets'))
+  return (r.targetInfos as Array<{ targetId: string; type: string; title?: string; url?: string }>)
+    .filter((t) => t.type !== 'browser_ui' && t.type !== 'browser')
+    .map((t) => ({ id: t.targetId, type: t.type, title: t.title, url: t.url, webSocketDebuggerUrl: pipePage(t.targetId) }))
 }
 
 export async function listPageTargets(): Promise<CdpTarget[]> {
@@ -140,8 +203,10 @@ export interface CdpSession {
   close(): void
 }
 
-/** Open a CDP session to an arbitrary webSocketDebuggerUrl (page or browser). */
+/** Open a CDP session to an arbitrary webSocketDebuggerUrl (page or browser), or
+ *  to a `pipe:` endpoint from this module, which goes through the broker. */
 export function connect(wsUrl: string, { timeout = 15000 } = {}): Promise<CdpSession> {
+  if (wsUrl.startsWith('pipe:')) return connectPipe(wsUrl, timeout)
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl)
     let nextId = 1
@@ -198,6 +263,102 @@ export function connect(wsUrl: string, { timeout = 15000 } = {}): Promise<CdpSes
       clearTimeout(openTimer)
       reject(new Error(`WebSocket error connecting to ${wsUrl}`))
     })
+  })
+}
+
+/**
+ * One connection to the broker, bound to one target (or to the browser).
+ *
+ * The broker speaks CDP's own JSON, one message per line, after a one-line
+ * handshake naming what to attach to. It answers the handshake once the session
+ * exists, so a tab that has gone fails here, as a closed tab's WebSocket would.
+ */
+function connectPipe(endpoint: string, timeout: number): Promise<CdpSession> {
+  const attach = endpoint === PIPE_BROWSER
+    ? { attach: 'browser' }
+    : { attach: 'target', targetId: endpoint.slice('pipe:target:'.length) }
+  return new Promise((resolve, reject) => {
+    const sock = createConnection(socketPath())
+    let nextId = 1
+    let ready = false
+    let buf = ''
+    const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; method: string }>()
+    const listeners = new Map<string, Array<(p: any) => void>>()
+    const fail = (e: Error) => {
+      for (const p of pending.values()) p.reject(e)
+      pending.clear()
+    }
+
+    const openTimer = setTimeout(() => {
+      sock.destroy()
+      reject(new Error(`CDP connect timeout ${timeout}ms to ${socketPath()}`))
+    }, timeout)
+
+    sock.setEncoding('utf8')
+    sock.on('connect', () => sock.write(JSON.stringify(attach) + '\n'))
+    sock.on('data', (chunk: string) => {
+      buf += chunk
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl)
+        buf = buf.slice(nl + 1)
+        let msg: any
+        try { msg = JSON.parse(line) } catch { continue }
+        if (!ready) {
+          clearTimeout(openTimer)
+          if (msg.error) {
+            sock.destroy()
+            reject(new Error(String(msg.error)))
+            return
+          }
+          ready = true
+          resolve(session)
+          continue
+        }
+        if (typeof msg.id === 'number' && pending.has(msg.id)) {
+          const p = pending.get(msg.id)!
+          pending.delete(msg.id)
+          if (msg.error) p.reject(new Error(`${p.method}: ${msg.error.message ?? JSON.stringify(msg.error)}`))
+          else p.resolve(msg.result)
+        } else if (msg.method) {
+          for (const cb of listeners.get(msg.method) ?? []) cb(msg.params)
+        }
+      }
+    })
+    sock.on('error', (e: any) => {
+      clearTimeout(openTimer)
+      const err = e?.code === 'ENOENT' || e?.code === 'ECONNREFUSED'
+        ? new Error(`no browser on ${socketPath()} — run: browser-automation launch`)
+        : new Error(`socket error on ${socketPath()}: ${e?.message ?? e}`)
+      if (!ready) reject(err)
+      fail(err)
+    })
+    sock.on('close', () => fail(new Error('the browser connection closed (tab closed or Chrome quit)')))
+
+    const session: CdpSession = {
+      send(method, params = {}, timeoutMs = 30000) {
+        return new Promise((res, rej) => {
+          const id = nextId++
+          const t = setTimeout(() => {
+            if (pending.delete(id)) rej(new Error(`CDP ${method} timed out after ${timeoutMs}ms`))
+          }, timeoutMs)
+          pending.set(id, {
+            resolve: (v: any) => { clearTimeout(t); res(v) },
+            reject: (e: Error) => { clearTimeout(t); rej(e) },
+            method,
+          })
+          sock.write(JSON.stringify({ id, method, params }) + '\n')
+        })
+      },
+      on(method, cb) {
+        const arr = listeners.get(method) ?? []
+        arr.push(cb)
+        listeners.set(method, arr)
+      },
+      close() {
+        sock.end()
+      },
+    }
   })
 }
 

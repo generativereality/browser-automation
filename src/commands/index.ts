@@ -24,6 +24,7 @@ import { doctorCommand } from './doctor.js'
 import { gcCommand } from './gc.js'
 import { portCommand } from './port.js'
 import { profileCommand } from './profile.js'
+import { brokerCommand } from './broker.js'
 import { contextCommand } from './context.js'
 
 const defaultCommand = define({
@@ -62,6 +63,7 @@ const subCommands = new Map<string, Command<any>>([
   ['prune', gcCommand],
   ['port', portCommand],
   ['profile', profileCommand],
+  ['broker', brokerCommand],
   ['context', contextCommand],
 ])
 
