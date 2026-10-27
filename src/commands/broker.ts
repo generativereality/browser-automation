@@ -1,9 +1,11 @@
 import { define } from 'gunshi'
-import { runBroker } from '../core/broker.js'
-import { socketPath } from '../core/cdp.js'
+import { runBroker, windowsPipeName } from '../core/broker.js'
+import { brokerDir, socketPath } from '../core/cdp.js'
 
 // Started by `launch`, detached; not for typing. It holds Chrome's DevTools pipe
 // for as long as Chrome runs, and serves it on this user's socket (core/broker.ts).
+// A login context's broker is the same command with `--context <name>`, which
+// `launch` passes: brokerDir() and socketPath() then answer for that context.
 export const brokerCommand = define({
   name: 'broker',
   description: "Internal: hold Chrome's DevTools pipe and serve it on this user's socket. `launch` starts it.",
@@ -17,7 +19,8 @@ export const brokerCommand = define({
       chrome: ctx.values.chrome!,
       profile: ctx.values.profile!,
       log: ctx.values.log!,
-      socket: socketPath(),
+      dir: brokerDir(),
+      socket: process.platform === 'win32' ? windowsPipeName() : socketPath(),
     })
   },
 })

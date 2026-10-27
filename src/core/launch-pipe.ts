@@ -1,5 +1,7 @@
-// `launch` on macOS and Linux: start the pipe broker (core/broker.ts), which
-// starts Chrome. Windows keeps the port (core/launch-windows.ts).
+// `launch`: start the pipe broker (core/broker.ts), which starts Chrome. Every
+// platform, and every login context (each its own broker). Only an explicit
+// BROWSER_AUTOMATION_CDP still means the port (core/launch-windows.ts on Windows,
+// scripts/launch-chrome.sh elsewhere).
 //
 // ⛔ **Chrome is exec'd here, not opened through open(1)** — the one thing
 // scripts/launch-chrome.sh exists to avoid. open(1) hands the app to
@@ -13,8 +15,10 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, openSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { brokerDir, browserVersion, closeBrowser, cdpPort, connect, socketPath } from './cdp.js'
-import { socketAnswers, statePath, type BrokerState } from './broker.js'
+import { brokerDir, brokerStatePath, browserVersion, cdpPort, closeBrowser, connect, socketPath } from './cdp.js'
+import { socketAnswers, type BrokerState } from './broker.js'
+import { ourChromeProcess } from './launch-windows.js'
+import { activeContextName } from './context-store.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -24,7 +28,7 @@ export function brokerLogPath(): string {
 
 export function brokerState(): BrokerState | null {
   try {
-    return JSON.parse(readFileSync(statePath(socketPath()), 'utf8')) as BrokerState
+    return JSON.parse(readFileSync(brokerStatePath(), 'utf8')) as BrokerState
   } catch {
     return null
   }
@@ -54,6 +58,7 @@ export async function pipeUp(timeout = 3000): Promise<boolean> {
  * `launch --restart` quits it.
  */
 export function portChromeRunning(): boolean {
+  if (process.platform === 'win32') return ourChromeProcess(cdpPort()) !== null
   try {
     execFileSync('pgrep', ['-u', String(process.getuid?.() ?? -1), '-f', '--', `--remote-debugging-port=${cdpPort()}`], { stdio: 'ignore' })
     return true
@@ -69,6 +74,7 @@ export function portChromeRunning(): boolean {
  * released, and SIGKILLs a browser mid-flush.
  */
 export function portChromeProfile(): string | null {
+  if (process.platform === 'win32') return ourChromeProcess(cdpPort())?.profile ?? null
   let out: string
   try {
     out = execFileSync('ps', ['-Ao', 'uid=,command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
@@ -105,9 +111,20 @@ export async function startBroker(chrome: string, profile: string, chromeLog: st
   mkdirSync(brokerDir(), { recursive: true, mode: 0o700 })
   const logFd = openSync(brokerLogPath(), 'a', 0o600)
   // Our own entry point, so the broker is exactly this build of the CLI.
-  const child = spawn(process.execPath, [process.argv[1], 'broker', '--chrome', chrome, '--profile', profile, '--log', chromeLog], {
+  // The context goes on the command line. The entry point decides the context
+  // from `--context`, a session or BAC_CONTEXT, and drops an inherited
+  // BROWSER_AUTOMATION_CONTEXT, so passing that down started a context's broker
+  // as the user's own. BAC_CONTEXT is cleared for the same reason the other way:
+  // the user's own broker must not become a project default's.
+  // windowsHide: the broker is a console process, and detached it would get a
+  // console window of its own on Windows. Chrome, its child, is not hidden.
+  const ctx = activeContextName()
+  const { BAC_CONTEXT: _project, ...env } = process.env
+  const child = spawn(process.execPath, [process.argv[1], 'broker', '--chrome', chrome, '--profile', profile, '--log', chromeLog, ...(ctx ? ['--context', ctx] : [])], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
+    windowsHide: true,
+    env,
   })
   child.unref()
   // A cold start against a long-lived profile measured 10–16s (see the launch
@@ -119,8 +136,24 @@ export async function startBroker(chrome: string, profile: string, chromeLog: st
   }
   return {
     ok: false,
-    reason: `Chrome did not answer on ${socketPath()} within 60s. Broker log: ${brokerLogPath()}; Chrome's log: ${chromeLog}`,
+    reason: `Chrome did not answer on ${socketPath()} within 60s.${refusedDevTools(chromeLog)} Broker log: ${brokerLogPath()}; Chrome's log: ${chromeLog}`,
   }
+}
+
+/**
+ * Chrome runs, but refused DevTools on the pipe, and says why only in its log.
+ * It refuses remote debugging on its DEFAULT profile, and decides which that is
+ * from its app-data folder: on Windows with USERPROFILE pointed elsewhere it
+ * could not find that folder, took our profile for its default, and the launch
+ * timed out with nothing else to go on (2026-10-27).
+ */
+function refusedDevTools(chromeLog: string): string {
+  let tail = ''
+  try { tail = readFileSync(chromeLog, 'utf8').slice(-16384) } catch { return '' }
+  if (!tail.includes('requires a non-default data directory')) return ''
+  return ' Chrome refused DevTools: it took this profile for its default one ("DevTools remote debugging requires a'
+    + ' non-default data directory"). It decides that from its own app-data folder, so this happens when it cannot'
+    + ` find that folder: check that ${process.platform === 'win32' ? 'USERPROFILE and LOCALAPPDATA are' : 'HOME is'} this account's own.`
 }
 
 /**
@@ -131,7 +164,8 @@ export async function startBroker(chrome: string, profile: string, chromeLog: st
 export async function stopBroker(log: (s: string) => void): Promise<void> {
   const st = brokerState()
   await closeBrowser().catch(() => {})
-  const gone = () => !alive(st?.brokerPid) && !alive(st?.chromePid) && !existsSync(socketPath())
+  // The state file goes with the broker; on Windows there is no socket file to watch.
+  const gone = () => !alive(st?.brokerPid) && !alive(st?.chromePid) && !existsSync(brokerStatePath())
   for (let i = 0; i < 60 && !gone(); i++) await sleep(250)
   if (gone()) return
   if (alive(st?.brokerPid)) {

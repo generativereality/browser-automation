@@ -12,6 +12,42 @@ import { dirname, join } from 'node:path'
 import { startFakeChrome } from './fake-chrome.mjs'
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.js')
+const FAKE_PIPE = join(dirname(fileURLToPath(import.meta.url)), 'fake-chrome-pipe.mjs')
+
+/**
+ * A context's Chrome, as it really runs since contexts moved onto the pipe: its
+ * own broker (`browser-automation broker` with the context set), serving a fake
+ * pipe Chrome that logs every method it is sent. `stats` reads that log, in the
+ * same shape fake-chrome.mjs gives the person's own Chrome.
+ */
+async function startFakeContextChrome(home, name, port) {
+  const events = join(home, `${name}-events.log`)
+  writeFileSync(events, '')
+  const { BAC_CONTEXT: _c, BAC_SESSION: _s, BROWSER_AUTOMATION_CDP: _p, ...base } = process.env
+  const broker = spawn(process.execPath, [CLI, 'broker', '--context', name, '--chrome', FAKE_PIPE, '--profile', join(home, `${name}-profile`), '--log', join(home, `${name}-chrome.log`)], {
+    env: { ...base, HOME: home, FAKE_EVENTS: events, NO_UPDATE_NOTIFIER: '1' },
+    stdio: 'ignore',
+  })
+  const state = join(home, '.browser-automation', 'contexts', name, 'broker.json')
+  for (let i = 0; i < 200 && !existsSync(state); i++) await new Promise((r) => setTimeout(r, 50))
+  if (!existsSync(state)) { broker.kill('SIGKILL'); throw new Error(`the broker for context "${name}" never served`) }
+  const lines = () => readFileSync(events, 'utf8').split('\n')
+  let closed = false
+  return {
+    port,
+    stats: {
+      get createTargets() { return lines().filter((l) => l === 'method browser Target.createTarget').length },
+      get pageMethods() { return lines().filter((l) => l.startsWith('method page ')).map((l) => l.slice('method page '.length)) },
+    },
+    async close() {
+      if (closed) return
+      closed = true
+      broker.kill('SIGTERM')
+      for (let i = 0; i < 200 && existsSync(state); i++) await new Promise((r) => setTimeout(r, 50))
+      broker.kill('SIGKILL')
+    },
+  }
+}
 
 function run(endpoint, argv, home, extraEnv = {}) {
   return new Promise((resolve) => {
@@ -40,12 +76,15 @@ function run(endpoint, argv, home, extraEnv = {}) {
 /** The person's Chrome, plus a context "work" whose Chrome is a second fake. */
 async function twoChromes(fn) {
   const own = await startFakeChrome()
-  const work = await startFakeChrome()
-  const home = mkdtempSync(join(tmpdir(), 'ba-ctx-'))
+  // Under /tmp, not os.tmpdir(): the context's socket lives in here, and a Unix
+  // socket path is capped at ~104 bytes on macOS, where $TMPDIR is long.
+  const home = mkdtempSync(process.platform === 'win32' ? join(tmpdir(), 'ba-ctx-') : '/tmp/ba-ctx-')
   const profileDir = join(home, '.browser-automation', 'contexts', 'work', 'chrome-profile')
   mkdirSync(profileDir, { recursive: true })
+  // A port is still recorded (an old Chrome of the context may hold it), but nothing listens there.
   writeFileSync(join(home, '.browser-automation', 'contexts', 'work.json'),
-    JSON.stringify({ name: 'work', port: work.port, profileDir, createdAt: new Date().toISOString() }))
+    JSON.stringify({ name: 'work', port: 10400, profileDir, createdAt: new Date().toISOString() }))
+  const work = await startFakeContextChrome(home, 'work', 10400)
   try {
     await fn({
       own, work, home, profileDir,
@@ -154,7 +193,7 @@ test('--context after a bare -- is text, not a flag', async () => {
 test('context forget refuses a running context, then removes it and its sessions', async () => {
   await twoChromes(async ({ home, work, profileDir, ba }) => {
     assert.equal((await ba('new', '-s', 'cf2', '--context', 'work')).code, 0)
-    assert.match((await ba('context')).all, /work\s+:\d+\s+\[running\]\s+sessions: cf2/)
+    assert.match((await ba('context')).all, /work\s+\[running\].*sessions: cf2/)
     const busy = await ba('context', 'forget', 'work')
     assert.notEqual(busy.code, 0)
     assert.match(busy.all, /is running — stop it first/)
@@ -193,6 +232,10 @@ function fakeAutomationProfile(home) {
   mkdirSync(join(p, 'Default', 'Local Extension Settings', 'abc'), { recursive: true })
   writeFileSync(join(p, 'Default', 'Local Extension Settings', 'abc', 'CURRENT'), 'ext data')
   writeFileSync(join(p, 'Default', 'Cookies'), 'cookies')
+  // Where current Chrome keeps them (Windows, Chrome 156): under Network/.
+  mkdirSync(join(p, 'Default', 'Network'), { recursive: true })
+  writeFileSync(join(p, 'Default', 'Network', 'Cookies'), 'cookies')
+  writeFileSync(join(p, 'Default', 'Network', 'TransportSecurity'), 'hsts')
   writeFileSync(join(p, 'Default', 'Secure Preferences'), '{}')
   writeFileSync(join(p, 'Default', 'Extensions', 'abc', '1.0', 'manifest.json'), '{}')
   writeFileSync(join(p, 'Default', 'Service Worker', 'Database', 'CURRENT'), 'sw')
@@ -211,10 +254,10 @@ test('a new context gets the automation profile\'s EXTENSIONS, not its logins, a
     const r = await ba('launch', '--context', 'proj', '--status')
     assert.match(r.all, /copying the EXTENSIONS .* no site logins/, r.all)
     const c = ctxDir(home, 'proj')
-    for (const kept of ['Default/Extensions/abc/1.0/manifest.json', 'Default/Local Extension Settings/abc/CURRENT', 'Default/Service Worker/Database/CURRENT', 'Default/Secure Preferences']) {
+    for (const kept of ['Default/Extensions/abc/1.0/manifest.json', 'Default/Local Extension Settings/abc/CURRENT', 'Default/Service Worker/Database/CURRENT', 'Default/Secure Preferences', 'Default/Network/TransportSecurity']) {
       assert.ok(existsSync(join(c, kept)), `kept ${kept}`)
     }
-    for (const left of ['Default/Cookies', 'Default/Login Data', 'Default/Web Data', 'Default/History', 'Default/Local Storage', 'Default/Service Worker/CacheStorage',
+    for (const left of ['Default/Cookies', 'Default/Network/Cookies', 'Default/Login Data', 'Default/Web Data', 'Default/History', 'Default/Local Storage', 'Default/Service Worker/CacheStorage',
       'Default/Cache', 'Default/Code Cache', 'GrShaderCache', 'SingletonLock', 'Cookies', 'ba-probe']) {
       assert.ok(!existsSync(join(c, left)), `left out ${left}`)
     }
@@ -313,7 +356,7 @@ test('context lists the person\'s own Chrome too, and marks the project default'
   await twoChromes(async ({ baWith }) => {
     await baWith({}, 'new', '-s', 'mine')
     const r = await baWith({ BAC_CONTEXT: 'work' }, 'context')
-    assert.match(r.all, /\(your automation Chrome\)\s+:\d+\s+\[running\].*sessions: mine/)
-    assert.match(r.all, /work\s+:\d+\s+\[running\].*← BAC_CONTEXT/)
+    assert.match(r.all, /\(your automation Chrome\)\s+\[running\].*sessions: mine/)
+    assert.match(r.all, /work\s+\[running\].*← BAC_CONTEXT/)
   })
 })

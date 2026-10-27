@@ -78,6 +78,13 @@ const SITE_DATA = new Set([
   'Trust Tokens-journal', 'Reporting and NEL', 'Reporting and NEL-journal', 'Network Persistent State',
   'DIPS', 'DIPS-wal', 'Sync Data', 'Device Bound Sessions', 'Device Bound Sessions-journal',
   'passkey_enclave_state', join('Service Worker', 'CacheStorage'),
+  // Where current Chrome keeps the network-layer ones: under Default/Network/.
+  // Missing these, an extensions-only copy on Windows (Chrome 156) took the
+  // automation profile's site COOKIES along, and failed only because Chrome
+  // holds that file locked there: EBUSY on Network\Cookies (2026-10-27).
+  ...['Cookies', 'Cookies-journal', 'Network Persistent State', 'Reporting and NEL', 'Reporting and NEL-journal',
+    'Trust Tokens', 'Trust Tokens-journal', 'Device Bound Sessions', 'Device Bound Sessions-journal', 'SCT Auditing Pending Reports']
+    .map((f) => join('Network', f)),
 ])
 
 function keep(src: string, root: string, mode: SeedMode): boolean {

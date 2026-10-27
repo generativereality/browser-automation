@@ -18,12 +18,12 @@ file under `~/.browser-automation/sessions/`.
   logins, and **browser extensions (password managers, etc.) all persist** across
   runs and across Claude Code restarts. The user can watch and complete
   interactive auth in the same window.
-- **No debugging port (macOS, Linux).** Chrome runs with
-  `--remote-debugging-pipe`, held by a small broker that `launch` starts, and the
-  CLI reaches it through `~/.browser-automation/cdp.sock` — a socket only this OS
-  user can open. A debugging port has no authentication, so with one open any
-  program on the computer could drive the signed-in browser. Windows still uses
-  the uid-derived port (`9223` for the first account).
+- **No debugging port.** Chrome runs with `--remote-debugging-pipe`, held by a
+  small broker that `launch` starts, and the CLI reaches it through
+  `~/.browser-automation/cdp.sock` (macOS, Linux) or a randomly named pipe
+  (Windows) — only this OS user can open either. A debugging port has no
+  authentication, so with one open any program on the computer could drive the
+  signed-in browser. Login contexts get a broker each. Only `BROWSER_AUTOMATION_CDP` means a port.
 - **Per-target CDP, not whole-browser.** Each command opens its own connection
   bound to a single tab (over the socket, a CDP session the broker attaches for
   that command and detaches after it). It never does Playwright-style "connect to the whole
@@ -234,7 +234,7 @@ There's no `state-save`/`state-load` to manage — the profile *is* the auth sto
 The profile holds ONE login per site. For a second account beside it (two
 Cloudflare dashboards), or to keep a whole project's logins apart from the
 user's (a client's Google Workspace, AWS), open the session in a named **login
-context**: a separate Chrome with its own profile, port and window, started on
+context**: a separate Chrome with its own profile, pipe and window, started on
 demand. The user's own Chrome is not touched.
 
 ```bash
@@ -481,8 +481,8 @@ code lives, how to validate with `node dist/index.js`, and the PR steps:
 - **The Chrome on the port is on a profile you did not expect** → someone worked
   around a launch failure by hand (`BROWSER_AUTOMATION_PROFILE`, a typed
   `--user-data-dir`), and that instance has few or no logins. Read the live
-  browser's profile before trusting a drive:
-  `ps -p $(lsof -ti:9223) -o command= | tr ' ' '\n' | grep user-data-dir`. The
+  browser's profile before trusting a drive: the `profile` field of
+  `~/.browser-automation/broker.json` (a context's is in `contexts/<name>/`). The
   shared profile is `~/.browser-automation/chrome-profile`. ⚠️ Do not just kill it;
   it may be the operator's live browser. Ask, then `launch`.
 - **Chrome was restarted** → nothing to do; the next `goto` recreates the

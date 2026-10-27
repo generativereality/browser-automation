@@ -13,7 +13,9 @@
 //
 //   * it starts Chrome, as its own child, with the pipe;
 //   * it listens on a Unix socket in a 0700 directory under ~, itself 0600, so
-//     the filesystem decides who may connect: this OS user, nobody else;
+//     the filesystem decides who may connect: this OS user, nobody else. On
+//     Windows, on a named pipe with a random name recorded only in this user's
+//     state file (see socketPath() in core/cdp.ts);
 //   * each connection names one target (or the browser) in its first line; the
 //     broker attaches a CDP session to that target and relays the connection's
 //     messages to it and that session's messages back, and detaches when the
@@ -29,6 +31,7 @@
 // cleanly rather than leaving one nobody can reach.
 
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { appendFileSync, chmodSync, closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createConnection, createServer, type Socket } from 'node:net'
 import { dirname, join } from 'node:path'
@@ -37,6 +40,9 @@ import type { Readable, Writable } from 'node:stream'
 export interface BrokerOptions {
   chrome: string
   profile: string
+  /** State file, lock and logs: this user's, 0700. One per Chrome (a login context has its own). */
+  dir: string
+  /** Where to listen. On Windows the broker picks a fresh pipe name itself (windowsPipeName). */
   socket: string
   /** Chrome's stdout/stderr — renderer-health reads it for the reason a renderer died. */
   log: string
@@ -52,8 +58,19 @@ export interface BrokerState {
   startedAt: string
 }
 
-export function statePath(socket: string): string {
-  return join(dirname(socket), 'broker.json')
+export function statePath(dir: string): string {
+  return join(dir, 'broker.json')
+}
+
+const windows = process.platform === 'win32'
+
+/** A named pipe nobody can predict, so nobody can create it before we do. */
+export function windowsPipeName(): string {
+  return `\\\\.\\pipe\\browser-automation-${randomUUID()}`
+}
+
+function servedSocket(dir: string): string | null {
+  try { return (JSON.parse(readFileSync(statePath(dir), 'utf8')) as BrokerState).socket ?? null } catch { return null }
 }
 
 /** The flags Chrome is started with. The profile flag is also how `ps` finds it. */
@@ -125,15 +142,19 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export async function runBroker(o: BrokerOptions): Promise<void> {
   // Everything this creates is for this user only, whatever the umask says.
   process.umask(0o077)
-  const dir = dirname(o.socket)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  chmodSync(dir, 0o700)
+  const dir = o.dir
+  for (const d of windows ? [dir] : [dir, dirname(o.socket)]) {
+    mkdirSync(d, { recursive: true, mode: 0o700 })
+    chmodSync(d, 0o700)
+  }
   const lock = join(dir, 'broker.lock')
   if (!takeLock(lock)) {
     // Another broker is starting or running here. Wait until it serves, then
     // leave the browser to it: the launch that started us finds it on the socket.
+    // (On Windows its pipe has a name of its own, read from its state file.)
     for (let i = 0; i < 240; i++) {
-      if (await socketAnswers(o.socket)) return
+      const theirs = windows ? servedSocket(dir) : o.socket
+      if (theirs && await socketAnswers(theirs)) return
       await sleep(250)
     }
     throw new Error(`another broker holds ${lock}, but nothing answered on ${o.socket} within 60s`)
@@ -149,12 +170,14 @@ export async function runBroker(o: BrokerOptions): Promise<void> {
 }
 
 async function serve(o: BrokerOptions, releaseLock: () => void): Promise<void> {
-  if (existsSync(o.socket)) {
+  const dir = o.dir
+  if (!windows && existsSync(o.socket)) {
     if (await socketAnswers(o.socket)) throw new Error(`a broker is already serving ${o.socket}`)
     rmSync(o.socket, { force: true }) // left behind by one that died
   }
 
   const logFd = openSync(o.log, 'a', 0o600)
+  // Not windowsHide: this is the headed browser a person is meant to see.
   const chrome = spawn(o.chrome, chromeArgs(o.profile, o.extraArgs), {
     stdio: ['ignore', logFd, logFd, 'pipe', 'pipe'],
   })
@@ -288,7 +311,7 @@ async function serve(o: BrokerOptions, releaseLock: () => void): Promise<void> {
     server.once('error', reject)
     server.listen(o.socket, () => resolve())
   })
-  chmodSync(o.socket, 0o600)
+  if (!windows) chmodSync(o.socket, 0o600)
 
   const state: BrokerState = {
     brokerPid: process.pid,
@@ -297,7 +320,7 @@ async function serve(o: BrokerOptions, releaseLock: () => void): Promise<void> {
     socket: o.socket,
     startedAt: new Date().toISOString(),
   }
-  writeFileSync(statePath(o.socket), JSON.stringify(state, null, 2) + '\n', { mode: 0o600 })
+  writeFileSync(statePath(dir), JSON.stringify(state, null, 2) + '\n', { mode: 0o600 })
 
   const cleanup = () => {
     server.close()
@@ -305,8 +328,8 @@ async function serve(o: BrokerOptions, releaseLock: () => void): Promise<void> {
     // closed" at once instead of waiting out its own send timeout, and so open
     // sockets don't keep this process alive.
     for (const s of socks) s.destroy()
-    rmSync(o.socket, { force: true })
-    rmSync(statePath(o.socket), { force: true })
+    if (!windows) rmSync(o.socket, { force: true })
+    rmSync(statePath(dir), { force: true })
     releaseLock()
   }
 

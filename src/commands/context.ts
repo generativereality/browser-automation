@@ -2,7 +2,8 @@ import { define } from 'gunshi'
 import { consola } from 'consola'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { cdpHost, cdpPort, closeBrowser } from '../core/cdp.js'
+import { cdpHost, closeBrowser, usesPipe } from '../core/cdp.js'
+import { pipeUp } from '../core/launch-pipe.js'
 import { browserPid } from '../core/renderer-health.js'
 import { contextsDir, listContextRecords, loadContextRecord, removeContextRecord, type ContextRecord } from '../core/context-store.js'
 import { deleteSession, listAllSessions } from '../core/session.js'
@@ -18,7 +19,9 @@ async function asChrome<T>(name: string | undefined, fn: () => T | Promise<T>): 
   }
 }
 
+/** Is the active Chrome up? Over its pipe, or, for the person's own with BROWSER_AUTOMATION_CDP set, its port. */
 async function up(): Promise<boolean> {
+  if (usesPipe()) return pipeUp(1500)
   try {
     return (await fetch(`${cdpHost()}/json/version`, { signal: AbortSignal.timeout(1500) })).ok
   } catch {
@@ -27,11 +30,7 @@ async function up(): Promise<boolean> {
 }
 
 async function running(r: ContextRecord): Promise<boolean> {
-  try {
-    return (await fetch(`http://localhost:${r.port}/json/version`, { signal: AbortSignal.timeout(1500) })).ok
-  } catch {
-    return false
-  }
+  return asChrome(r.name, up)
 }
 
 /**
@@ -41,7 +40,7 @@ async function running(r: ContextRecord): Promise<boolean> {
 export const contextCommand = define({
   name: 'context',
   description:
-    'Login contexts — a separate Chrome (own profile, own port, own window) per extra account, so a second login sits next to your own; '
+    'Login contexts — a separate Chrome (own profile, own pipe, own window) per extra account, so a second login sits next to your own; '
     + 'opened by `new`/`goto --context <name>`, which start it on demand. `context` lists them; `context stop <name>` quits one; '
     + '`context forget <name>` removes it (its sessions too), keeping its profile unless --delete-profile.',
   args: {
@@ -63,11 +62,11 @@ export const contextCommand = define({
         const on = await up()
         const pid = on ? browserPid() : null
         const users = sessions.filter((s) => (s.context ?? undefined) === name).map((s) => s.name)
-        return `  ${label.padEnd(22)} :${String(cdpPort()).padEnd(5)} [${on ? 'running' : 'stopped'}]`
+        return `  ${label.padEnd(22)} [${on ? 'running' : 'stopped'}]`
           + `${pid ? ` pid ${pid}` : ''}${color ? `  ${color} window` : ''}${name && name === project ? '  ← BAC_CONTEXT' : ''}`
           + `${users.length > 6 ? `  ${users.length} sessions` : users.length ? `  sessions: ${users.join(', ')}` : ''}`
       })
-      consola.log(`# Chromes driven by browser-automation — login contexts' profiles under ${contextsDir()}`)
+      consola.log(`# Chromes driven by browser-automation, each on its own pipe — login contexts' profiles under ${contextsDir()}`)
       consola.log(await row('(your automation Chrome)', undefined, undefined))
       for (const r of all) consola.log(await row(r.name, r.name, r.color))
       if (!all.length) consola.log('  No login contexts yet. Open one with: browser-automation new -s <session> --context <name> <url>')

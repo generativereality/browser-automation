@@ -1,7 +1,7 @@
 import { define } from 'gunshi'
 import { consola } from 'consola'
 import { listSessions } from '../core/session.js'
-import { cdpPort, listPageTargets, listTargets } from '../core/cdp.js'
+import { cdpPort, listPageTargets, listTargets, usesPipe } from '../core/cdp.js'
 import { activeContextName } from '../core/context-store.js'
 
 export const listCommand = define({
@@ -49,7 +49,7 @@ export const listCommand = define({
     }
     if (sessions.length) consola.log('')
     const ctxName = activeContextName()
-    consola.log(`# open tabs (${targets.length}) in ${ctxName ? `context "${ctxName}"'s Chrome` : 'your automation Chrome'} (:${cdpPort()}) — address with -t <id> or -m <substr>`)
+    consola.log(`# open tabs (${targets.length}) in ${ctxName ? `context "${ctxName}"'s Chrome` : 'your automation Chrome'} ${usesPipe() ? '' : ` (:${cdpPort()})`} — address with -t <id> or -m <substr>`)
     for (const t of targets) {
       const owner = sessions.find((s) => s.targetId === t.id)
       const title = (t.title ?? '').replace(/\s+/g, ' ').slice(0, 28)
