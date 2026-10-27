@@ -29,7 +29,7 @@
 // cleanly rather than leaving one nobody can reach.
 
 import { spawn } from 'node:child_process'
-import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createConnection, createServer, type Socket } from 'node:net'
 import { dirname, join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
@@ -92,22 +92,32 @@ const alive = (pid: number) => {
  * the profile lock and exits, and one broker's listen fails. An O_EXCL pid file
  * taken before Chrome is spawned leaves exactly one. A lock whose pid is gone
  * was left by a broker that died, and is taken over.
+ *
+ * The pid is written to a file of our own first and linked into place, so the
+ * lock never exists without it. Created empty and written after, a broker that
+ * read it in between found no pid, took it for a dead broker's, and took the
+ * lock as well: two brokers, and the second one's listen failed.
  */
 function takeLock(lock: string): boolean {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync(lock, 'wx', 0o600)
-      writeFileSync(fd, `${process.pid}\n`)
-      closeSync(fd)
-      return true
-    } catch (e: any) {
-      if (e.code !== 'EEXIST') throw e
-      const pid = Number.parseInt(readFileSync(lock, 'utf8'), 10)
-      if (Number.isInteger(pid) && pid > 0 && alive(pid)) return false
-      rmSync(lock, { force: true })
+  const mine = `${lock}.${process.pid}`
+  writeFileSync(mine, `${process.pid}\n`, { mode: 0o600 })
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        linkSync(mine, lock)
+        return true
+      } catch (e: any) {
+        if (e.code !== 'EEXIST') throw e
+        let pid = Number.NaN
+        try { pid = Number.parseInt(readFileSync(lock, 'utf8'), 10) } catch (r: any) { if (r.code !== 'ENOENT') throw r }
+        if (Number.isInteger(pid) && pid > 0 && alive(pid)) return false
+        rmSync(lock, { force: true })
+      }
     }
+    return false
+  } finally {
+    rmSync(mine, { force: true })
   }
-  return false
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
