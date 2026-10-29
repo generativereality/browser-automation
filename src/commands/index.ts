@@ -6,6 +6,7 @@ import { newCommand } from './new.js'
 import { gotoCommand } from './goto.js'
 import { snapshotCommand } from './snapshot.js'
 import { clickCommand } from './click.js'
+import { keyCommand } from './key.js'
 import { fillCommand } from './fill.js'
 import { readCommand } from './read.js'
 import { focusCommand } from './focus.js'
@@ -42,6 +43,7 @@ const subCommands = new Map<string, Command<any>>([
   ['snapshot', snapshotCommand],
   ['snap', snapshotCommand],
   ['click', clickCommand],
+  ['key', keyCommand],
   ['fill', fillCommand],
   ['read', readCommand],
   ['focus', focusCommand],
