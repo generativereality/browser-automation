@@ -125,13 +125,71 @@ export const SNAPSHOT_EXPR = WALK + `(() => {
   return {url:location.href,title:document.title,count:out.length,overlayCount:overlayEls.length,overlayText,elements:out};
 })()`
 
+// The default (untrusted) click. It needs no focus, so the tab stays in the
+// background, but `el.click()` alone fires only `click`, and headless UI
+// libraries act on pointer events: a Radix DropdownMenu trigger opens on
+// `pointerdown` and ignored it. So the click is preceded by the pointer and
+// mouse events a real one sends, at the element's centre, as a mouse would.
+// Like a browser, a `pointerdown` whose default is prevented gets no
+// `mousedown`/`mouseup` and moves no focus. It still ends in `el.click()`,
+// which some controls need: a link that ignored `Input.dispatchMouseEvent`
+// opened its dialog on `el.click()` (references/page-recipes.md).
+//
+// One exception: a Radix Select option ignores a `pointerup` that lands right
+// after the `pointerdown` that opened the list, so it is picked the way a
+// keyboard picks it, focus + Enter, which needs no focus on the tab either.
 export function clickExpr(ref: string): string {
   const r = JSON.stringify(ref)
   return WALK + `(() => {
     const el=__baFind(${r});
     if(!el)return {err:'ref not found: '+${r}+' (re-run snapshot)'};
     el.scrollIntoView({block:'center',inline:'center'});
+    const tag=el.tagName.toLowerCase();
+    if(el.getAttribute('role')==='option'&&el.closest('[data-radix-select-viewport]')){
+      el.focus({preventScroll:true});
+      const k={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true,composed:true,view:window};
+      el.dispatchEvent(new KeyboardEvent('keydown',k));
+      el.dispatchEvent(new KeyboardEvent('keyup',k));
+      return {ok:true,tag,via:'keyboard'};
+    }
+    const b=el.getBoundingClientRect();
+    const x=b.left+b.width/2,y=b.top+b.height/2;
+    const o={bubbles:true,cancelable:true,composed:true,view:window,clientX:x,clientY:y,screenX:x,screenY:y,button:0,buttons:1,detail:1,pointerId:1,pointerType:'mouse',isPrimary:true};
+    const up={...o,buttons:0};
+    el.dispatchEvent(new PointerEvent('pointerover',o));
+    el.dispatchEvent(new PointerEvent('pointerenter',{...o,bubbles:false,cancelable:false}));
+    el.dispatchEvent(new MouseEvent('mouseover',o));
+    const down=el.dispatchEvent(new PointerEvent('pointerdown',o));
+    if(down&&el.dispatchEvent(new MouseEvent('mousedown',o))&&typeof el.focus==='function')el.focus({preventScroll:true});
+    el.dispatchEvent(new PointerEvent('pointerup',up));
+    if(down)el.dispatchEvent(new MouseEvent('mouseup',up));
     el.click();
+    return {ok:true,tag};
+  })()`
+}
+
+const KEY_CODES: Record<string, number> = { Enter: 13, Escape: 27, Tab: 9, ' ': 32, Backspace: 8, Delete: 46, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, Home: 36, End: 35, PageUp: 33, PageDown: 34 }
+
+// `key`: focus a ref and dispatch keydown + keyup for one key (an
+// `event.key` name such as Enter, Escape, ArrowDown, or one character),
+// without bringing the tab to the front. For listboxes, menus and cmdk-style
+// lists that act on the keyboard. Untrusted, like the default click: it fires
+// handlers but types nothing into a text field (use `fill` for that).
+export function keyExpr(ref: string, key: string): string {
+  const r = JSON.stringify(ref)
+  const name = key === 'Space' ? ' ' : key
+  const keyCode = KEY_CODES[name] ?? (name.length === 1 ? name.toUpperCase().charCodeAt(0) : 0)
+  const code = name === ' ' ? 'Space' : /^[a-z]$/i.test(name) ? `Key${name.toUpperCase()}` : /^[0-9]$/.test(name) ? `Digit${name}` : name
+  const k = JSON.stringify({ key: name, code, keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true })
+  return WALK + `(() => {
+    const el=__baFind(${r});
+    if(!el)return {err:'ref not found: '+${r}+' (re-run snapshot)'};
+    el.scrollIntoView({block:'center',inline:'center'});
+    if(typeof el.focus==='function')el.focus({preventScroll:true});
+    const t=document.activeElement&&el.contains(document.activeElement)?document.activeElement:el;
+    const k={...${k},view:window};
+    t.dispatchEvent(new KeyboardEvent('keydown',k));
+    t.dispatchEvent(new KeyboardEvent('keyup',k));
     return {ok:true,tag:el.tagName.toLowerCase()};
   })()`
 }
