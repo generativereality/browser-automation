@@ -89,11 +89,10 @@ file under `~/.browser-automation/sessions/`.
   attribute. Because each invocation is a fresh process, **re-snapshot after any
   action that changes the DOM** — refs from an old snapshot go stale, exactly
   like Playwright refs.
-- **Clicks/fills are JS-dispatched** (`element.click()`, native value setter +
-  `input`/`change` events). This works on background tabs, which native CDP
-  mouse events do not reliably reach in headed Chrome. Trade-off: dispatched
-  events are not `isTrusted`, so a few hard anti-bot / payment flows may reject
-  them (see Gotchas).
+- **Clicks/fills are JS-dispatched** (a real click's pointer + mouse events, then
+  `element.click()`; native value setter + `input`/`change`). This works on
+  background tabs without taking focus, and drives Radix / headless-UI controls.
+  Trade-off: not `isTrusted`, so a few anti-bot / payment flows reject them (see Gotchas).
 
 ## Setup (per machine)
 
@@ -175,6 +174,7 @@ Page commands take a tab selector — `-s <session>` (default `$BAC_SESSION`, el
 | Adopt an open tab into a session | `browser-automation bind -s bank -m nordnet` |
 | List interactive elements (refs) | `browser-automation snapshot -m op.fi` |
 | Click by ref | `browser-automation click -m op.fi e7` |
+| Press a key on a ref (listbox, menu, cmdk list) | `browser-automation key -s app e7 Enter` |
 | Type into a field by ref | `browser-automation fill -s work e3 "value" [--submit]` |
 | Read page text (or a selector) | `browser-automation read -m op.fi ['.balance']` |
 | Evaluate JS in the tab (escape hatch) | `browser-automation eval -m op.fi 'document.title'` |
@@ -296,23 +296,27 @@ browser-automation read -s cf2                # follows the session's context �
 - **Refs go stale after any DOM change**, not just navigation. Snapshot → use
   those refs for one action → re-snapshot. "ref not found" means re-snapshot.
 - **`isTrusted` / synthetic events.** Clicks and fills are JS-dispatched by
-  default, so widgets that demand trusted events ignore them. **For clicks, pass
-  `--trusted`** — it dispatches a real CDP `Input.dispatchMouseEvent`, makes the
+  default and need no focus. **Radix and headless-UI triggers, menu items and popovers
+  work with a plain `click`** (a Radix Select option is picked by keyboard; the CLI prints
+  `(keyboard)`); for keyboard-driven lists use `key [ref] Enter` / `ArrowDown` / `Escape`.
+  Only widgets that check `isTrusted` ignore this. **For those clicks, pass `--trusted`** — it dispatches a real CDP `Input.dispatchMouseEvent`, makes the
   renderer treat the tab as focused+visible (CDP input no-ops on a backgrounded
   tab; the person's window keeps showing its own tab) and waits for the element to be actionable (stable position +
   unoccluded hit-test) before pressing. For fills, pass `--native` to drive
   character insertion through CDP `Input.insertText`, which fires real
   `beforeinput`/`input` events.
-  **Reach for `--trusted` the moment a click "succeeds" but nothing happens** —
-  the CLI prints `✔ clicked e7` on a dispatched event regardless of whether the
-  widget reacted, so a silent no-op is the signature, not an error. Canonical
-  cases: LinkedIn artdeco dropdown items, Radix dropdowns/popovers, cmdk
-  comboboxes, and **framework-state form widgets whose inputs are `readonly` with
+  `--trusted` brings the tab's renderer to the foreground, so use it only when
+  the default click "succeeds" but nothing happens. The CLI prints `✔ clicked e7`
+  on a dispatched event regardless of whether the widget reacted, so a silent
+  no-op is the signature, not an error. Canonical cases: LinkedIn artdeco dropdown
+  items, and **framework-state form widgets whose inputs are `readonly` with
   no `name`** (Viking Line's booking selectors — the visible fields are display
   shells; the real state lives in the framework, so `fill` and DOM value-setting
   do nothing at all).
-- **There is NO way to send real keystrokes, and `fill --native` is not one** — it never fires
-  `keydown`, so a combobox that filters on keystrokes stays empty. ⛔ **Do not hand-roll a
+- **There is NO way to send real (trusted) keystrokes.** `key` dispatches an untrusted
+  `keydown`/`keyup`, enough for listboxes, menus and cmdk lists, but it types nothing into a
+  text field. `fill --native` never fires `keydown`, so a combobox that filters on keystrokes
+  stays empty. ⛔ **Do not hand-roll a
   raw-CDP trusted click** — `--trusted` already waits for actionability; check
   `browser-automation click --help` before building anything. A form can also swallow a
   dispatched click and fall through to a native POST (a raw `{"message":"Not Found"}` page,
@@ -396,7 +400,7 @@ browser-automation read -s cf2                # follows the session's context �
   on the tab first, and capture the **viewport**, not `--full` (with
   `captureBeyondViewport` they composite at their pre-capture width, narrow and
   clipped). A blank region on a page with no cross-origin iframes is a real finding.
-- **Controls that ignore `click`** (Radix menus, `click` vs `--trusted`), hidden
+- **Controls that ignore `click`** (`click` vs `--trusted`), hidden
   dialogs, stalled infinite scroll, React composers and GitHub image attachments:
   **[`references/page-recipes.md`](references/page-recipes.md)**.
 - **This needs the operator's machine, awake.** The shared headed Chrome and its

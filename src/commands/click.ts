@@ -17,7 +17,7 @@ export const clickCommand = define({
     trusted: {
       type: 'boolean',
       description:
-        'Dispatch a real, genuinely-trusted CDP mouse click (Input.dispatchMouseEvent) at the element instead of the default JS-dispatched el.click(). Makes the renderer treat the tab as focused+visible and WAITS until it reports so (CDP input no-ops on a backgrounded tab) — without selecting the tab in its window, so the person\'s own tab keeps their typing, then waits for the element to be actionable (stable position + unoccluded hit-test) before pressing — mirroring Playwright. Use for widgets that demand isTrusted events AND animate in: artdeco dropdown menu items (LinkedIn More→Connect), Radix dropdown/popover triggers, cmdk comboboxes — which a default click, or an immediate trusted click on stale coordinates, only highlights without firing.',
+        'Dispatch a real, genuinely-trusted CDP mouse click (Input.dispatchMouseEvent) at the element instead of the default JS-dispatched pointer + mouse sequence and el.click(). The default needs no focus and already drives Radix/headless-UI triggers and items; use this only for widgets that check isTrusted. Makes the renderer treat the tab as focused+visible and WAITS until it reports so (CDP input no-ops on a backgrounded tab) — without selecting the tab in its window, so the person\'s own tab keeps their typing, then waits for the element to be actionable (stable position + unoccluded hit-test) before pressing — mirroring Playwright. Canonical case: artdeco dropdown menu items (LinkedIn More→Connect), which demand isTrusted and animate in, so a default click, or an immediate trusted click on stale coordinates, only highlights them without firing.',
     },
   },
   async run(ctx) {
@@ -94,8 +94,8 @@ export const clickCommand = define({
       return
     }
 
-    const r = await evaluate<{ ok?: boolean; tag?: string; err?: string }>(targetId, clickExpr(ref))
+    const r = await evaluate<{ ok?: boolean; tag?: string; via?: string; err?: string }>(targetId, clickExpr(ref))
     if (r.err) { consola.error(r.err); process.exit(1) }
-    consola.success(`clicked ${ref} <${r.tag}>`)
+    consola.success(`clicked ${ref} <${r.tag}>${r.via ? ` (${r.via})` : ''}`)
   },
 })

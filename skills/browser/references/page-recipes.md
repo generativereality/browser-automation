@@ -10,28 +10,19 @@ clicks and needed `click --trusted`, while a link-styled **Withdraw** anchor was
 reverse: `Input.dispatchMouseEvent` at its centre silently did nothing, and `el.click()`
 opened the confirm dialog every time. Try both before concluding a control is broken.
 
-## Radix menus open on `pointerdown`
+## Radix menus open on `pointerdown`: a plain `click` handles it
 
-A Radix `DropdownMenu` or a row "⋯" trigger will not open from `click`, nor from a bare
-`element.click()`. Radix listens on `pointerdown`, so you get a snapshot with no
-`[role=menuitem]` in it. Send pointer events **plus** a real click, and return the items
-in the same call so you see at once whether it opened:
+A Radix `DropdownMenu` trigger, a row "⋯" trigger or a Select trigger acts on
+`pointerdown`, not on `click`. The default `click` sends `pointerdown` and the rest of a
+real click's events before `click`, so it opens them without taking focus, and the items
+take a plain `click` after a re-snapshot. A Radix Select option is picked by keyboard
+(focus + Enter), because Select ignores a `pointerup` that comes right after the
+`pointerdown` that opened it; `click` does this by itself and prints `(keyboard)`.
 
-```bash
-browser-automation eval -s app '(() => {
-  const b = [...document.querySelectorAll("button")].find(x => /Open menu/.test(x.getAttribute("aria-label") || x.textContent));
-  const o = { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, button: 0 };
-  b.dispatchEvent(new PointerEvent("pointerdown", o));
-  b.dispatchEvent(new PointerEvent("pointerup", o));
-  b.click();
-  return [...document.querySelectorAll("[role=menuitem]")].map(x => x.textContent.trim()).join(" | ");
-})()'
-```
-
-⚠️ **Do not fire `click` and then this sequence.** Two activations toggle the menu open
-and shut again, which looks identical to it never opening. Once it is open, the menu
-items and dialog buttons take an ordinary `click [ref]` after a re-snapshot; only the
-trigger needs pointer events.
+Older CLIs sent only `element.click()`, so the trigger stayed shut and the snapshot had no
+`[role=menuitem]` in it. ⚠️ With those, never send `click` and then a hand-rolled pointer
+sequence: two activations toggle the menu open and shut again, which looks identical to
+it never opening.
 
 ## Dialogs: filter by visibility, not by role
 
