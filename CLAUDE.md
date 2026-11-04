@@ -105,6 +105,9 @@ here, as the maintainer — so the rule has to be explicit: **approve only when 
 maintainer has said to for THIS release** ("release it", "approve it"); otherwise
 give them the run link and wait. The gate exists because three versions once
 shipped inside forty minutes that nobody approved. The script never approves.
+Even with the go-ahead, Claude Code's auto mode can refuse that `gh api` call as
+a "Production Deploy" (0.5.1, 2026-10-14). Then hand over the run link, or ask
+for the call to be allowed. Don't route around the refusal.
 
 **Downstream, after `finish`** (it prints this too):
 - `rememberthis.ai` vendors the skill. There: `python3
@@ -133,6 +136,21 @@ breaks releases.
   ⇒ **A local red is a signal until a same-conditions run on `master` is red the same way**; the CI
   run on the release tag stays the authoritative one.
 
+- **Letting another session test an unreleased build.** Do **not** `npm link`
+  (see Publishing). Instead install a packed build under a prerelease version,
+  so `browser-automation --version` says which one is running:
+  `npm version 0.X.Y-dev.N --no-git-tag-version && npm pack`, then
+  `npm install -g <tgz>`, then restore `package.json` and `package-lock.json`.
+  It replaces the global bin for EVERY session on the Mac. A reinstall during
+  another session's command makes that command fail `command not found`
+  (gm-website hit it 3 times on 2026-10-24); a retry works.
+  The skill is separate, and **each Claude account has its own copy**.
+  `$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json` names the folder, for
+  `~/.claude` and for an account such as `~/.claude-gapminder`. Copy
+  `skills/browser/` and `scripts/launch-chrome.sh` into every account the
+  testers run under. A tab's backend is shown by `cctabs transcript <tab>`.
+  To undo: `npm install -g @generativereality/browser-automation@latest`,
+  then `/plugin update` in each account.
 - The agent shell runs with `set -e -o pipefail` — `grep`/`head` returning
   non-zero (no match, SIGPIPE) aborts a chained script. Keep verification
   `grep`s out of release sequences, or append `|| true`.
