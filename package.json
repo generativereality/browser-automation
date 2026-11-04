@@ -1,7 +1,7 @@
 {
   "name": "@generativereality/browser-automation",
   "version": "0.7.0",
-  "description": "Daemonless, per-tab-isolated browser automation CLI for Claude Code. Drives one shared headed Chrome (persistent profile + extensions) over per-target CDP — many parallel sessions, no focus stealing, nothing long-lived to crash.",
+  "description": "Let many Claude Code sessions use your own signed-in Chrome at once, each in its own tab, without stealing your screen. Daemonless CLI over per-target CDP: persistent profile and extensions, no MCP server, nothing long-lived to crash.",
   "type": "module",
   "bin": {
     "browser-automation": "dist/index.js"
@@ -28,7 +28,11 @@
     "cdp",
     "chrome-devtools-protocol",
     "playwright-alternative",
-    "ai-agents"
+    "ai-agents",
+    "chrome",
+    "claude-code-plugin",
+    "parallel-agents",
+    "cli"
   ],
   "author": "motin",
   "license": "MIT",
