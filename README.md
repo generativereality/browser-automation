@@ -1,12 +1,18 @@
 # browser-automation
 
-A daemonless, per-tab-isolated browser automation CLI for AI agents (built for
-Claude Code, usable anywhere). It drives **one shared headed Chrome** with a
-**persistent profile** — cookies and browser extensions (password managers, etc.)
-survive across runs — over **per-target Chrome DevTools Protocol**.
+**Let many Claude Code sessions use your own signed-in Chrome at once, each in
+its own tab, without stealing your screen.**
 
-No MCP server, no daemon, **nothing long-lived to crash**. Every command is a
-fresh process that connects to a single tab, acts, and exits.
+Your Chrome, your profile: cookies and extensions (password managers, etc.)
+survive across runs, so agents work in the sites you are already signed in to.
+Each session gets its own background tab, so parallel agents never fight over
+one active tab and never pull focus from you.
+
+It is a CLI for AI agents (built for Claude Code, usable anywhere) that drives
+**one shared headed Chrome** with a **persistent profile** over
+**per-target Chrome DevTools Protocol**. No MCP server, no daemon,
+**nothing long-lived to crash**. Every command is a fresh process that connects
+to a single tab, acts, and exits.
 
 ## Why
 
