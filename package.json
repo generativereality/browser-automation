@@ -1,6 +1,6 @@
 {
   "name": "@generativereality/browser-automation",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Let many Claude Code sessions use your own signed-in Chrome at once, each in its own tab, without stealing your screen. Daemonless CLI over per-target CDP: persistent profile and extensions, no MCP server, nothing long-lived to crash.",
   "type": "module",
   "bin": {
