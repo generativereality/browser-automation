@@ -163,3 +163,34 @@ jobs:
 
       - name: Publish to npm
         run: npm publish
+
+  # A GitHub Release for the tag, with the merged PRs since the previous tag as
+  # its notes. Until 0.7.1 the repo had none: the Releases page was empty and a
+  # release existed only as a tag plus the npm version.
+  #
+  # Its own job, after `publish`, for two reasons. The npm job keeps a
+  # read-only token, since `contents: write` is only needed here. And a
+  # GitHub Release never appears for a version npm refused.
+  #
+  # GitHub starts the notes at the previous RELEASE, not the previous tag.
+  # That is right as long as every tag gets a release. Because v0.7.1 was the
+  # first, its notes would have gone back to the first commit, so it was made by
+  # hand with `--notes-start-tag v0.7.0`.
+  #
+  # If the release already exists (for example, made by hand), the step does
+  # nothing.
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists"; exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"

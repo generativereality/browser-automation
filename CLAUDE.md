@@ -76,6 +76,9 @@ did not say. What it now handles, so you do not have to:
   made from another checkout. `finish` syncs the **tag's** files
   (`BA_PLUGIN_SOURCE`) using **this checkout's** script, because an old tag's
   copy lacks fixes.
+- **The GitHub Release is made by CI**, in the `github-release` job after the npm
+  publish, with the merged PRs as notes. The first was v0.7.1 (2026-11-05); older
+  tags have none.
 - **"Published" is read from the registry**, never `npm view`: a successful
   publish is not served for minutes (3.5 for 0.4.13), and `npm view` also caches.
   The same metadata cache makes `npm install -g pkg@<new>` fail ETARGET right
