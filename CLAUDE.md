@@ -112,6 +112,17 @@ Even with the go-ahead, Claude Code's auto mode can refuse that `gh api` call as
 a "Production Deploy" (0.5.1, 2026-10-14). Then hand over the run link, or ask
 for the call to be allowed. Don't route around the refusal.
 
+**Before cutting a MINOR, tell the brand apps.** The Augmented Mind brand apps
+(Clerk.AI and its siblings) install this CLI themselves, accepting only
+`>=0.7.1 <0.8.0` (`MIN_BROWSER_AUTOMATION_CLI` in their `verify.rs`, set
+2026-11-06). A minor release is the one they must test before they move their
+upper limit. So before `cut minor`, send the `brands-dev` session (or
+`Notes/coordination/inbox/to-brands-dev-…`) what the release changes. Patches
+need no notice.
+Why: 0.7.1 broke the first-run browser check in every brand app, live builds
+included. `port` still printed 9223 after Chrome had moved to the pipe, and
+nobody downstream had been told.
+
 **Downstream, after `finish`** (it prints this too):
 - `rememberthis.ai` vendors the skill. There: `python3
   scripts/sync-vendored-skills.py --update`, re-read the `LOCAL` block against
