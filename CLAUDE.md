@@ -115,7 +115,8 @@ for the call to be allowed. Don't route around the refusal.
 **Before cutting a MINOR, tell the brand apps.** The Augmented Mind brand apps
 (Clerk.AI and its siblings) install this CLI themselves, accepting only
 `>=0.7.1 <0.8.0` (`MIN_BROWSER_AUTOMATION_CLI` in their `verify.rs`, set
-2026-11-06). A minor release is the one they must test before they move their
+2026-11-06 in the brands monorepo's `next` as `e86ffb253`; it reaches each
+brand with its next build). A minor release is the one they must test before they move their
 upper limit. So before `cut minor`, send the `brands-dev` session (or
 `Notes/coordination/inbox/to-brands-dev-…`) what the release changes. Patches
 need no notice.
