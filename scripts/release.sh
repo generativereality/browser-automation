@@ -52,6 +52,8 @@ plan() {
     - a changed default, flag meaning, exit code, or output a script might parse
     - anything a user may need to act on after upgrading
   otherwise patch (fixes, and commands that complete the CLI).
+  A MINOR: tell brands-dev BEFORE cutting it. The brand apps accept only
+  >=0.7.1 <0.8.0 and must test a build against the new minor first (CLAUDE.md).
   Name it to the maintainer with the reason, and get a yes, before `cut`.
 TXT
 }
