@@ -14,6 +14,8 @@ import { Socket } from 'node:net'
 // does; FAKE_EVENTS names a file that gets one line per attach, detach and method.
 const attachDelay = Number(process.env.FAKE_ATTACH_DELAY_MS || 0)
 const record = (line) => { if (process.env.FAKE_EVENTS) appendFileSync(process.env.FAKE_EVENTS, line + '\n') }
+// The flags it was started with, for tests of what the broker asks of Chrome.
+record(`argv ${process.argv.slice(2).join(' ')}`)
 
 // Sockets on the inherited pipe fds, not fs streams: an fs stream reads a pipe
 // with a blocking read() on the thread pool, and process.exit then waits on it.
