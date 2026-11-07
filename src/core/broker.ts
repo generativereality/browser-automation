@@ -73,10 +73,23 @@ function servedSocket(dir: string): string | null {
   try { return (JSON.parse(readFileSync(statePath(dir), 'utf8')) as BrokerState).socket ?? null } catch { return null }
 }
 
+/**
+ * Chrome marks itself automated (navigator.webdriver = true, the
+ * AutomationControlled Blink feature) whenever it is started with
+ * --remote-debugging-pipe, as it does for --enable-automation and headless; the
+ * port never did. Cloudflare's Turnstile refuses a browser with that mark however
+ * often the person ticks the box, so from the move to the pipe (#34, 2026-10-27)
+ * claude.ai and dash.cloudflare.com stopped passing in a Chrome that had passed
+ * them for months. This is the person's own headed, signed-in browser, not a
+ * test harness: switch the mark off and keep the pipe.
+ */
+export const NO_AUTOMATION_MARK = '--disable-blink-features=AutomationControlled'
+
 /** The flags Chrome is started with. The profile flag is also how `ps` finds it. */
 export function chromeArgs(profile: string, extra: string[] = []): string[] {
   return [
     '--remote-debugging-pipe',
+    NO_AUTOMATION_MARK,
     `--user-data-dir=${profile}`,
     '--no-first-run',
     '--no-default-browser-check',

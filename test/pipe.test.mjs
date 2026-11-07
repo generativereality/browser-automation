@@ -29,6 +29,7 @@ const env = {
   BROWSER_AUTOMATION_CDP: '',
   BROWSER_AUTOMATION_RENDERER_GRACE: '200',
   BROWSER_AUTOMATION_RENDERER_BUDGET: '400',
+  FAKE_EVENTS: join(home, 'fake-events.log'),
 }
 delete env.BROWSER_AUTOMATION_CDP
 const sock = join(home, '.browser-automation', 'cdp.sock')
@@ -69,6 +70,19 @@ test('the socket is this user\'s only, and the broker records the Chrome it star
   const st = JSON.parse(readFileSync(join(dirname(sock), 'broker.json'), 'utf8'))
   assert.equal(st.brokerPid, broker.pid)
   assert.ok(st.chromePid > 0)
+})
+
+test('Chrome is started on the pipe without the automation mark, so Cloudflare lets it through', async () => {
+  // --remote-debugging-pipe alone sets navigator.webdriver = true, and Turnstile
+  // (claude.ai, dash.cloudflare.com) then never passes; the port never set it.
+  // The broker records Chrome's pid as it spawns it, before the fake has run a line.
+  assert.ok(await wait(() => existsSync(env.FAKE_EVENTS)), 'the fake Chrome never started')
+  const argv = readFileSync(env.FAKE_EVENTS, 'utf8').split('\n').find((l) => l.startsWith('argv '))
+  assert.ok(argv, 'the fake Chrome recorded no argv')
+  const flags = argv.slice('argv '.length).split(' ')
+  assert.ok(flags.includes('--remote-debugging-pipe'), argv)
+  assert.ok(flags.includes('--disable-blink-features=AutomationControlled'), argv)
+  assert.ok(!flags.includes('--enable-automation'), argv)
 })
 
 test('each command reaches the tab its session names, also when they run at once', async () => {
