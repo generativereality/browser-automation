@@ -11,7 +11,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -129,6 +129,71 @@ test('a context whose socket path would be too long for a Unix socket gets a sho
     assert.ok(Buffer.byteLength(st.socket) <= 100, st.socket)
   } finally {
     stopAt(ctxState(home, name))
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+// ⛔ A broker that accepts connections while its Chrome never answers. Found on
+// mbp21's rig account on 2026-11-16: the 0.7.1 broker had been up since 11-06,
+// every client got no answer through cdp.sock, and `launch` refused to replace a
+// broker that was "already serving", so the brand app's first-run check failed
+// until somebody killed both pids by hand. Its two renderers had been at 100%
+// CPU for days.
+//
+// The fake stops answering once FAKE_HANG_FILE holds its pid. broker.json's
+// startedAt is backdated, because a broker younger than a cold start is starting,
+// not hung (see the next test).
+function hangIt(home, env, { backdate = true } = {}) {
+  const statePath = join(home, '.browser-automation', 'broker.json')
+  const st = JSON.parse(readFileSync(statePath, 'utf8'))
+  if (backdate) writeFileSync(statePath, JSON.stringify({ ...st, startedAt: '2026-11-06T09:00:00.000Z' }))
+  writeFileSync(env.FAKE_HANG_FILE, String(st.chromePid))
+  return st
+}
+
+test('a hung broker: --status and doctor say so, and launch replaces it', async () => {
+  const { home, env } = setup()
+  env.FAKE_HANG_FILE = join(home, 'hang')
+  try {
+    assert.equal((await cli(env, 'launch')).code, 0)
+    const old = hangIt(home, env)
+
+    const status = await cli(env, 'launch', '--status')
+    assert.equal(status.code, 1, status.out)
+    assert.match(status.out, /hung/i)
+    assert.ok(alive(old.brokerPid), '--status must never stop anything')
+
+    const doctor = await cli(env, 'doctor')
+    assert.match(doctor.out, /hung/i)
+
+    const r = await cli(env, 'launch')
+    assert.equal(r.code, 0, r.out)
+    assert.match(r.out, /replac/i)
+    assert.ok(!alive(old.brokerPid), 'the hung broker is still running')
+    assert.ok(!alive(old.chromePid), 'the hung Chrome is still running')
+    const now = JSON.parse(readFileSync(join(home, '.browser-automation', 'broker.json'), 'utf8'))
+    assert.notEqual(now.brokerPid, old.brokerPid)
+    assert.equal((await cli(env, 'launch', '--status')).code, 0)
+  } finally {
+    stopBroker(home)
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a broker younger than a cold start is starting, not hung, and nothing stops it', async () => {
+  const { home, env } = setup()
+  env.FAKE_HANG_FILE = join(home, 'hang')
+  try {
+    assert.equal((await cli(env, 'launch')).code, 0)
+    const st = hangIt(home, env, { backdate: false })
+    const status = await cli(env, 'launch', '--status')
+    assert.equal(status.code, 1, status.out)
+    assert.match(status.out, /starting/i)
+    assert.doesNotMatch(status.out, /hung/i)
+    assert.ok(alive(st.brokerPid) && alive(st.chromePid))
+  } finally {
+    stopBroker(home)
+    try { const st = JSON.parse(readFileSync(join(home, '.browser-automation', 'broker.json'), 'utf8')); process.kill(st.chromePid, 'SIGKILL') } catch {}
     rmSync(home, { recursive: true, force: true })
   }
 })

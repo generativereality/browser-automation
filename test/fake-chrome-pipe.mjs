@@ -7,7 +7,7 @@
 // Its one trick: `Runtime.evaluate` answers with the id of the TARGET the
 // session is attached to, so a test can tell whether a command reached the tab
 // it named and nobody else's.
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
 import { Socket } from 'node:net'
 
 // Test hooks: FAKE_ATTACH_DELAY_MS answers an attach late, as a slow Chrome
@@ -27,7 +27,15 @@ let n = 0
 const targets = new Map([['T0', { targetId: 'T0', type: 'page', title: '', url: 'about:blank' }]])
 const sessions = new Map() // sessionId -> targetId
 
+// FAKE_HANG_FILE names a file; once it holds this fake's pid, the fake reads
+// the pipe and answers nothing, as the rig account's Chrome did for ten days
+// (2026-11-06 to 16): the broker kept accepting connections, Chrome never replied.
+const hung = () => {
+  try { return readFileSync(process.env.FAKE_HANG_FILE, 'utf8').trim() === String(process.pid) } catch { return false }
+}
+
 function handle(m) {
+  if (process.env.FAKE_HANG_FILE && hung()) return record(`hung ${m.method}`)
   // Every method, and whether it came on a tab's session, for tests that need to
   // know which Chrome did the work (contexts.test.mjs).
   record(`method ${m.sessionId ? 'page' : 'browser'} ${m.method}`)

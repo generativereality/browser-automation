@@ -51,6 +51,59 @@ export async function pipeUp(timeout = 3000): Promise<boolean> {
 }
 
 /**
+ * What answers on the socket, told apart the way a caller has to act on it:
+ *
+ * - `up`: Chrome replies through the broker.
+ * - `down`: nothing accepts on the socket.
+ * - `starting`: the broker accepts but Chrome has not replied yet, and the
+ *   broker is younger than a cold start (60s, as `startBroker` waits). It
+ *   listens before Chrome is ready, so a second `launch` racing the first
+ *   sees exactly this, and must not kill it.
+ * - `hung`: the broker accepts, and Chrome has not replied on two tries,
+ *   from a broker older than a cold start. Found on mbp21's rig account on
+ *   2026-11-16: a 0.7.1 broker up since 11-06 accepted every connection and
+ *   answered none, `launch` refused to replace a broker "already serving",
+ *   and the brand app's first-run check failed until both pids were killed
+ *   by hand. Its two renderers had been at 100% CPU for days.
+ *
+ * Two tries, because one timeout is not a verdict (renderer-health learned
+ * that first): a Chrome busy for a few seconds is not hung.
+ */
+export type PipeHealth =
+  | { state: 'up'; product: string }
+  | { state: 'down' }
+  | { state: 'starting' | 'hung'; brokerPid?: number; chromePid?: number; startedAt?: string; waited: number }
+
+export const COLD_START_MS = 60_000
+
+export async function pipeHealth(tries: number[] = [3000, 4000]): Promise<PipeHealth> {
+  if (!(await socketAnswers(socketPath(), 3000))) return { state: 'down' }
+  for (const t of tries) {
+    try {
+      return { state: 'up', product: (await browserVersion(t)).product }
+    } catch { /* tried again below, then judged */ }
+  }
+  const st = brokerState()
+  const started = st ? Date.parse(st.startedAt) : Number.NaN
+  const young = Number.isFinite(started) && Date.now() - started < COLD_START_MS
+  return {
+    state: young ? 'starting' : 'hung',
+    brokerPid: st?.brokerPid,
+    chromePid: st?.chromePid,
+    startedAt: st?.startedAt,
+    waited: Math.round(tries.reduce((a, b) => a + b, 0) / 1000),
+  }
+}
+
+/** One line on a broker that accepts and does not answer, for `launch --status` and `doctor`. */
+export function describeUnanswered(h: Extract<PipeHealth, { state: 'starting' | 'hung' }>, { hint = true } = {}): string {
+  const pids = `broker pid ${h.brokerPid ?? '?'}, Chrome pid ${h.chromePid ?? '?'}`
+  if (h.state === 'starting') return `Chrome is starting: the broker (${pids}) accepts on ${socketPath()}, and Chrome has not answered yet.`
+  return `The broker is hung: it accepts on ${socketPath()}, but Chrome has not answered in ${h.waited}s (${pids}, up since ${h.startedAt ?? '?'}).`
+    + (hint ? ' `browser-automation launch` replaces it; its tabs close, and they cannot be reached as it is.' : '')
+}
+
+/**
  * Is this user's Chrome from before the move still running on the port?
  *
  * It holds the profile, so a pipe Chrome cannot open it alongside — and it is
@@ -161,12 +214,16 @@ function refusedDevTools(chromeLog: string): string {
  * exited and released the profile. Browser.close first, so the profile is
  * flushed; the broker's own SIGTERM path next; SIGKILL only after that.
  */
-export async function stopBroker(log: (s: string) => void): Promise<void> {
+export async function stopBroker(log: (s: string) => void, { hung = false } = {}): Promise<void> {
   const st = brokerState()
-  await closeBrowser().catch(() => {})
   // The state file goes with the broker; on Windows there is no socket file to watch.
   const gone = () => !alive(st?.brokerPid) && !alive(st?.chromePid) && !existsSync(brokerStatePath())
-  for (let i = 0; i < 60 && !gone(); i++) await sleep(250)
+  // A hung Chrome has already not answered; asking it to close over CDP and
+  // waiting 15s for that only delays the signals.
+  if (!hung) {
+    await closeBrowser().catch(() => {})
+    for (let i = 0; i < 60 && !gone(); i++) await sleep(250)
+  }
   if (gone()) return
   if (alive(st?.brokerPid)) {
     log('Chrome did not quit within 15s of being asked; asking the broker to stop it.')

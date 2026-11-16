@@ -11,7 +11,7 @@ import { probeRenderer, explainRendererFailure, chromeLogPath } from '../core/re
 import { legacyProfileDir, migrateProfile, resolveProfile } from '../core/profile.js'
 import { chromeExecutable } from '../core/chrome-path.js'
 import { cdpUp, startChrome, stopOurChrome, stopPortChrome } from '../core/launch-windows.js'
-import { pipeUp, portChromeProfile, portChromeRunning, quitPortChrome, startBroker, stopBroker } from '../core/launch-pipe.js'
+import { describeUnanswered, pipeHealth, portChromeProfile, portChromeRunning, quitPortChrome, startBroker, stopBroker } from '../core/launch-pipe.js'
 
 export const launchCommand = define({
   name: 'launch',
@@ -218,9 +218,12 @@ async function launchPipe(statusOnly: boolean, restart: boolean): Promise<boolea
   const ctxName = activeContextName()
   const driveIt = `Drive it with: browser-automation goto -s <session>${ctxName ? ` --context ${ctxName} <url>  (a session opened in it follows it; later commands need no --context)` : ' <url>'}`
   if (statusOnly) {
-    const up = await pipeUp()
-    consola.log(up ? `Chrome is up on the pipe (${sock()})` : `Chrome is NOT running (nothing answers on ${sock()})`)
-    return up
+    // Reports, never acts: a hung broker is named, and left for `launch`.
+    const h = await pipeHealth()
+    if (h.state === 'up') consola.log(`Chrome is up on the pipe (${sock()})`)
+    else if (h.state === 'down') consola.log(`Chrome is NOT running (nothing answers on ${sock()})`)
+    else consola.log(describeUnanswered(h))
+    return h.state === 'up'
   }
 
   // **A browser of this account still on the open port**, from before the move.
@@ -262,7 +265,14 @@ async function launchPipe(statusOnly: boolean, restart: boolean): Promise<boolea
     }
   }
 
-  if (await pipeUp()) {
+  let h = await pipeHealth()
+  // Another launch's broker, still in its cold start: wait it out, as that
+  // launch does, rather than start a second Chrome on the same profile.
+  for (let i = 0; h.state === 'starting' && i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 1000))
+    h = await pipeHealth([2000])
+  }
+  if (h.state === 'up') {
     if (!restart) {
       consola.log(`Already running on the pipe (${sock()}).`)
       consola.log(driveIt)
@@ -272,6 +282,17 @@ async function launchPipe(statusOnly: boolean, restart: boolean): Promise<boolea
     consola.info(`Restarting Chrome — closing ${tabs ?? '?'} open tab(s).`)
     try {
       await stopBroker((s) => consola.warn(s))
+    } catch (e: any) {
+      consola.error(String(e?.message ?? e))
+      return false
+    }
+  } else if (h.state !== 'down') {
+    // Hung, or a "starting" broker that never answered in a whole cold start.
+    // Its tabs cannot be reached, so replacing it loses nothing reachable;
+    // logins written before the hang are on disk.
+    consola.warn(`${describeUnanswered({ ...h, state: 'hung' }, { hint: false })} Replacing it.`)
+    try {
+      await stopBroker((s) => consola.warn(s), { hung: true })
     } catch (e: any) {
       consola.error(String(e?.message ?? e))
       return false
