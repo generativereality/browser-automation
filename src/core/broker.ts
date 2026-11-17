@@ -209,16 +209,44 @@ async function serve(o: BrokerOptions, releaseLock: () => void): Promise<void> {
   // Every open connection, attached yet or not: cleanup hangs up on all of them.
   const socks = new Set<Socket>()
 
-  const toPipe = (msg: object) => toChrome.write(JSON.stringify(msg) + '\0')
-  const ask = (method: string, params: object): Promise<any> =>
-    new Promise((resolve) => {
-      const id = nextId++
-      own.set(id, resolve)
-      toPipe({ id, method, params })
-    })
   const tell = (c: Client, msg: object) => {
     if (!c.sock.destroyed) c.sock.write(JSON.stringify(msg) + '\n')
   }
+
+  // ── The pipe going away before Chrome does ───────────────────────────────
+  // Asked to stop, the broker ends its side of the pipe once Chrome has had 10s
+  // to quit; Chrome can also break it, or close it, and take a while to exit.
+  // Until Chrome exits, connections stay open and keep sending. A write to the
+  // ended pipe emits ERR_STREAM_WRITE_AFTER_END (while a wedged Chrome is not
+  // reading, the end() is still pending and the write is "after end"); with no
+  // listener that error killed the broker without cleanup (mbp21, 2026-11-13),
+  // leaving its state file and socket behind. So: never write to a pipe that is
+  // gone, listen for its errors, and once it is gone answer every command with
+  // an error and hang up, as when Chrome exits. Chrome exiting still ends us.
+  let pipeGone: string | null = null
+  const losePipe = (why: string) => {
+    if (pipeGone) return
+    pipeGone = why
+    try { appendFileSync(o.log, `browser-automation broker: Chrome's DevTools pipe is gone (${why}); waiting for Chrome to exit\n`) } catch {}
+    for (const [id, r] of relayed) { relayed.delete(id); tell(r.client, { id: r.id, error: { code: -32000, message: `Chrome is shutting down: ${why}` } }) }
+    for (const [id, resolve] of own) { own.delete(id); resolve({ error: { message: why } }) }
+    for (const s of socks) s.end()
+  }
+  toChrome.on('error', (e) => losePipe(`writing to it failed: ${e.message}`))
+  toChrome.on('close', () => losePipe('it closed'))
+  fromChrome.on('error', (e) => losePipe(`reading from it failed: ${e.message}`))
+  const toPipe = (msg: object): boolean => {
+    if (pipeGone || toChrome.writableEnded || toChrome.destroyed) return false
+    toChrome.write(JSON.stringify(msg) + '\0')
+    return true
+  }
+  const ask = (method: string, params: object): Promise<any> =>
+    new Promise((resolve) => {
+      if (pipeGone) return resolve({ error: { message: `Chrome is shutting down: ${pipeGone}` } })
+      const id = nextId++
+      own.set(id, resolve)
+      if (!toPipe({ id, method, params })) { own.delete(id); resolve({ error: { message: 'Chrome is shutting down: its DevTools pipe is closed' } }) }
+    })
 
   let buf = ''
   fromChrome.setEncoding('utf8')
@@ -305,7 +333,12 @@ async function serve(o: BrokerOptions, releaseLock: () => void): Promise<void> {
         if (typeof msg.id !== 'number' || typeof msg.method !== 'string') continue
         const id = nextId++
         relayed.set(id, { client: c, id: msg.id })
-        toPipe({ id, method: msg.method, params: msg.params ?? {}, ...(c.sessionId ? { sessionId: c.sessionId } : {}) })
+        if (!toPipe({ id, method: msg.method, params: msg.params ?? {}, ...(c.sessionId ? { sessionId: c.sessionId } : {}) })) {
+          relayed.delete(id)
+          tell(c, { id: msg.id, error: { code: -32000, message: `Chrome is shutting down: ${pipeGone ?? 'its DevTools pipe is closed'}` } })
+          sock.end()
+          return
+        }
       }
     })
     const gone = () => {
@@ -350,7 +383,7 @@ async function serve(o: BrokerOptions, releaseLock: () => void): Promise<void> {
   // Its exit then ends us. If it will not go, close the pipe — it exits on that.
   const stop = () => {
     toPipe({ id: nextId++, method: 'Browser.close', params: {} })
-    setTimeout(() => toChrome.end(), 10_000).unref()
+    setTimeout(() => { toChrome.end(); losePipe('closed by the broker: Chrome did not quit within 10s of Browser.close') }, 10_000).unref()
     setTimeout(() => chrome.kill('SIGKILL'), 20_000).unref()
   }
   process.on('SIGTERM', stop)

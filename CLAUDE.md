@@ -154,6 +154,12 @@ breaks releases.
   testers run under. A tab's backend is shown by `cctabs transcript <tab>`.
   To undo: `npm install -g @generativereality/browser-automation@latest`,
   then `/plugin update` in each account.
+- **`node dist/index.js launch` from a worktree makes THAT build the user's broker.** The broker is
+  spawned from `process.argv[1]`, so it keeps running the WIP dist (even after the worktree moves on)
+  and serves every session until Chrome exits. On 2026-11-13 the broker that crashed was
+  `.claude/worktrees/ba-argfix/dist/index.js`, though the global install was the release. Only run
+  `launch` from a dev build against a scratch `HOME` or a `--context`, never the user's own browser.
+
 - The agent shell runs with `set -e -o pipefail` — `grep`/`head` returning
   non-zero (no match, SIGPIPE) aborts a chained script. Keep verification
   `grep`s out of release sequences, or append `|| true`.
