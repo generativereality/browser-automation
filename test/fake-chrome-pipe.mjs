@@ -13,6 +13,10 @@ import { Socket } from 'node:net'
 // Test hooks: FAKE_ATTACH_DELAY_MS answers an attach late, as a slow Chrome
 // does; FAKE_EVENTS names a file that gets one line per attach, detach and method.
 const attachDelay = Number(process.env.FAKE_ATTACH_DELAY_MS || 0)
+// FAKE_WEDGED_MS plays a wedged Chrome (short of memory, say): asked to close,
+// it stops reading its pipe, so what is written to it backs up, and exits only
+// this long after.
+const wedged = Number(process.env.FAKE_WEDGED_MS || 0)
 const record = (line) => { if (process.env.FAKE_EVENTS) appendFileSync(process.env.FAKE_EVENTS, line + '\n') }
 // The flags it was started with, for tests of what the broker asks of Chrome.
 record(`argv ${process.argv.slice(2).join(' ')}`)
@@ -35,7 +39,9 @@ function handle(m) {
   const error = (message) => send({ id: m.id, error: { code: -32602, message }, ...(m.sessionId ? { sessionId: m.sessionId } : {}) })
   switch (m.method) {
     case 'Browser.getVersion': return reply({ product: 'FakeChrome/1.0' })
-    case 'Browser.close': reply({}); return setTimeout(() => process.exit(0), 50)
+    case 'Browser.close':
+      if (wedged) { input.pause(); return setTimeout(() => process.exit(0), wedged) }
+      reply({}); return setTimeout(() => process.exit(0), 50)
     case 'Target.getTargets': return reply({ targetInfos: [...targets.values(), { targetId: 'UI', type: 'browser_ui', title: '', url: '' }] })
     case 'Target.createTarget': {
       const targetId = `T${++n}`
