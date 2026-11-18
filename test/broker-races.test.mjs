@@ -32,7 +32,9 @@ function setup(extraEnv = {}) {
   delete env.BROWSER_AUTOMATION_CDP
   const sock = join(home, '.browser-automation', 'cdp.sock')
   const broker = () => {
-    const child = spawn(process.execPath, [CLI, 'broker', '--chrome', FAKE, '--profile', join(home, 'profile'), '--log', join(home, 'chrome.log')], { env, stdio: 'ignore' })
+    const child = spawn(process.execPath, [CLI, 'broker', '--chrome', FAKE, '--profile', join(home, 'profile'), '--log', join(home, 'chrome.log')], { env, stdio: ['ignore', 'ignore', 'pipe'] })
+    child.stderrText = ''
+    child.stderr.setEncoding('utf8').on('data', (d) => { child.stderrText += d })
     child.exited = new Promise((r) => child.on('exit', (code) => r(code)))
     return child
   }
@@ -103,6 +105,43 @@ test('Chrome exiting hangs up on open connections at once, and the broker exits'
     await Promise.race([s.whenClosed, new Promise((r) => setTimeout(r, 5000))])
     assert.ok(Date.now() - started < 3000, `the connection stayed open ${Date.now() - started}ms after Chrome died`)
     assert.ok(await wait(() => !alive(broker.pid), 3000), 'the broker outlived Chrome')
+  } finally {
+    broker.kill('SIGKILL')
+    rmSync(t.home, { recursive: true, force: true })
+  }
+})
+
+// 2026-11-13, mbp21: the broker died of an unhandled ERR_STREAM_WRITE_AFTER_END
+// in toPipe. Asked to stop (`launch --restart` SIGTERMs it when Chrome does not
+// quit), it sends Browser.close and, 10s later, closes its end of the pipe. A
+// wedged Chrome is still running then, other tabs' connections are still open,
+// and the next command one of them sent was written after that end. The error
+// had no listener: the broker crashed without cleaning up, leaving its state
+// file and socket behind, and every session lost the browser.
+test('a command sent after the broker closed the pipe does not take the broker down', { timeout: 40000 }, async () => {
+  const t = setup({ FAKE_WEDGED_MS: '13000' })
+  const broker = t.broker()
+  try {
+    assert.ok(await wait(() => existsSync(t.sock)))
+    const chromePid = t.state().chromePid
+    const a = open(t.sock, { attach: 'browser' })
+    assert.ok(await wait(() => a.lines.some((l) => l.includes('"attached"')), 3000), 'never attached')
+    broker.kill('SIGTERM')
+    // The broker closes the pipe 10s after Browser.close goes unanswered; keep
+    // sending, as a busy tab does, across that moment. Chrome reads nothing now,
+    // so these back up in the pipe and its close cannot complete: the window in
+    // which the next write is one after end. (A big command, as a long `eval` is,
+    // fills the pipe quickly.)
+    const pad = 'x'.repeat(64 * 1024)
+    for (let i = 1; i < 60 && !a.destroyed && alive(broker.pid); i++) {
+      a.write(JSON.stringify({ id: i, method: 'Runtime.evaluate', params: { expression: pad } }) + '\n')
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    const code = await Promise.race([broker.exited, new Promise((r) => setTimeout(() => r('still running'), 15000))])
+    assert.equal(code, 0, `the broker should exit cleanly once Chrome is gone, not crash (exit: ${code})\n${broker.stderrText.split('\n').filter((l) => /Error|error/.test(l)).slice(0, 3).join('\n')}`)
+    assert.ok(!alive(chromePid), 'Chrome is still running')
+    assert.ok(!existsSync(join(dirname(t.sock), 'broker.json')), 'the broker left its state file behind')
+    assert.ok(!existsSync(t.sock), 'the broker left its socket behind')
   } finally {
     broker.kill('SIGKILL')
     rmSync(t.home, { recursive: true, force: true })
