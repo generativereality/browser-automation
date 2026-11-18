@@ -122,7 +122,8 @@ test('a command sent after the broker closed the pipe does not take the broker d
   const t = setup({ FAKE_WEDGED_MS: '13000' })
   const broker = t.broker()
   try {
-    assert.ok(await wait(() => existsSync(t.sock)))
+    // The socket listens a moment before broker.json is written: wait for both.
+    assert.ok(await wait(() => existsSync(t.sock) && existsSync(join(dirname(t.sock), 'broker.json'))))
     const chromePid = t.state().chromePid
     const a = open(t.sock, { attach: 'browser' })
     assert.ok(await wait(() => a.lines.some((l) => l.includes('"attached"')), 3000), 'never attached')
