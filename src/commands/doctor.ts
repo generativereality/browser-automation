@@ -1,8 +1,8 @@
 import { define } from 'gunshi'
 import { consola } from 'consola'
 import { execFileSync } from 'node:child_process'
-import { browserVersion, cdpHost, cdpPort, listTargets, socketPath, usesPipe } from '../core/cdp.js'
-import { portChromeRunning } from '../core/launch-pipe.js'
+import { cdpHost, cdpPort, listTargets, socketPath, usesPipe } from '../core/cdp.js'
+import { describeUnanswered, pipeHealth, portChromeRunning } from '../core/launch-pipe.js'
 import { listSessions } from '../core/session.js'
 import { resolveProfile } from '../core/profile.js'
 import { chromeExecutable, chromeSearchDescription } from '../core/chrome-path.js'
@@ -79,10 +79,15 @@ export const doctorCommand = define({
     let version: any
     if (usesPipe()) {
       // The socket is in this user's 0700 directory, so whatever answers is ours.
-      try {
-        ok(`Chrome reachable: ${(await browserVersion()).product}`)
-      } catch {
+      // A broker that accepts and never answers used to read as "no browser",
+      // which says nothing of the two processes still running (2026-11-16).
+      const h = await pipeHealth()
+      if (h.state === 'up') ok(`Chrome reachable: ${h.product}`)
+      else if (h.state === 'down') {
         bad(`No browser on ${socketPath()} — run:  browser-automation launch`)
+        return
+      } else {
+        bad(describeUnanswered(h))
         return
       }
     } else try {

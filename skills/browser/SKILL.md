@@ -457,7 +457,9 @@ code lives, how to validate with `node dist/index.js`, and the PR steps:
   `google-chrome`/`chromium` on PATH. `doctor` prints the one it found — check that
   line before concluding "Chrome is not installed". Before 0.4.19 the macOS launcher
   only knew `/Applications` and ignored `CHROME`.
-- **`No CDP browser on http://localhost:<port>`** → `browser-automation launch`.
+- **`No CDP browser on http://localhost:<port>`**, **`No browser on …cdp.sock`** or
+  **`The broker is hung`** → `browser-automation launch`, which replaces a hung broker. An older
+  CLI refuses: stop the two pids in `~/.browser-automation/broker.json`, then launch.
   If it says the port is held by ANOTHER user, that is not your Chrome and
   driving it would act in their session — quit Chrome in that account, or set
   `BROWSER_AUTOMATION_PORT`.
